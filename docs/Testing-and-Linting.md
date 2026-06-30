@@ -21,6 +21,15 @@ this doc walks through both, starting from nothing.
 The local hook is your fast feedback loop; CI is the backstop in case the hook
 was skipped (`--no-verify`) or never installed on a given machine.
 
+CI runs on `windows-latest`, not Linux. Most scripts here use Windows-only
+cmdlets and modules (CIM/WMI, `ActiveDirectory`, etc.) that either don't
+resolve or can't be installed at all on a Linux runner — `Mock` still needs
+the real command to exist to build its proxy, even though it never actually
+calls it. This doesn't remove the need to mock `Get-ADUser`,
+`Get-MgUser`, `Get-AzVM` and friends, though — CI has no real domain
+controller or tenant to talk to regardless of OS, so those calls must always
+be faked out in tests (see below).
+
 **One-time setup per clone:**
 
 ```powershell

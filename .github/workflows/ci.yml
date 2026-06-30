@@ -9,7 +9,10 @@ on:
 
 jobs:
   lint-and-test:
-    runs-on: ubuntu-latest
+    # Windows, not ubuntu: this repo's scripts lean heavily on Windows-only
+    # cmdlets and modules (CIM/WMI, ActiveDirectory, etc.) that either fail
+    # to resolve or can't be installed at all on Linux runners.
+    runs-on: windows-latest
 
     steps:
       - name: Check out repository
