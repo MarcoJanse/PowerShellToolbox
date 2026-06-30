@@ -24,6 +24,40 @@ jobs:
           Install-PSResource -Name PSScriptAnalyzer -TrustRepository -Scope CurrentUser
           Install-PSResource -Name Pester -Version '5.*' -TrustRepository -Scope CurrentUser
 
+      - name: Install module dependencies declared in manifests
+        shell: pwsh
+        run: |
+          # Reads RequiredModules out of every module manifest so new modules
+          # don't need a matching ci.yml edit - just declare the dependency
+          # in the .psd1 like Ictstuff.Windows.PackageManagement already does.
+          # The declared ModuleVersion is installed as an EXACT pin, not a
+          # floor: PSResourceGet's open-ended range resolution (e.g.
+          # "[1.0.0,]") was verified to pick an arbitrary version rather than
+          # the true latest for at least one real package on PSGallery, likely
+          # because that package mixes 3- and 4-part version numbers across
+          # its release history, which breaks NuGet's version comparison.
+          # An exact pin sidesteps that and is reproducible besides - bumping
+          # to a newer release is then a deliberate manifest edit, not
+          # something CI does silently on your behalf.
+          $requiredModules = Get-ChildItem -Path ./Modules -Recurse -Filter *.psd1 |
+              ForEach-Object { (Import-PowerShellDataFile -Path $_.FullName).RequiredModules } |
+              ForEach-Object { if ($_ -is [string]) { @{ ModuleName = $_ } } else { $_ } } |
+              Group-Object ModuleName | ForEach-Object { $_.Group[0] }
+
+          foreach ($module in $requiredModules) {
+              $installArgs = @{
+                  Name            = $module.ModuleName
+                  TrustRepository = $true
+                  Scope           = 'CurrentUser'
+              }
+              if ($module.ModuleVersion) {
+                  $installArgs.Version = "[$($module.ModuleVersion)]"
+              }
+
+              Write-Host "Installing required module: $($module.ModuleName) $($installArgs.Version)"
+              Install-PSResource @installArgs
+          }
+
       - name: Run PSScriptAnalyzer
         shell: pwsh
         run: |
