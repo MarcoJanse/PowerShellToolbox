@@ -13,12 +13,11 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install PSScriptAnalyzer and Pester
         shell: pwsh
         run: |
-          Set-PSResourceRepository -Name PSGallery -Trusted
           Install-PSResource -Name PSScriptAnalyzer -TrustRepository -Scope CurrentUser
           Install-PSResource -Name Pester -Version '5.*' -TrustRepository -Scope CurrentUser
 
@@ -50,7 +49,7 @@ jobs:
 
       - name: Publish test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pester-results
           path: testResults.xml
