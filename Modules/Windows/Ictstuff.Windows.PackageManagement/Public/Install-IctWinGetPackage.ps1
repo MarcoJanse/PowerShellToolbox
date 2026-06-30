@@ -1,4 +1,4 @@
-function Install-WinGetPackage {
+function Install-IctWinGetPackage {
     <#
     .SYNOPSIS
         Installs multiple WinGet packages by ID, skipping already-installed ones.
@@ -11,28 +11,28 @@ function Install-WinGetPackage {
     .PARAMETER Source
         WinGet source to install from. Defaults to 'winget'.
     .EXAMPLE
-        Install-WinGetPackage -PackageId 'Microsoft.VisualStudioCode', 'Git.Git'
+        Install-IctWinGetPackage -PackageId 'Microsoft.VisualStudioCode', 'Git.Git'
 
         Installs VS Code and Git, skipping either if already present.
     .EXAMPLE
-        'Microsoft.PowerToys', 'KeePassXCTeam.KeePassXC' | Install-WinGetPackage
+        'Microsoft.PowerToys', 'KeePassXCTeam.KeePassXC' | Install-IctWinGetPackage
 
         Installs packages piped in as strings.
     .EXAMPLE
-        Install-WinGetPackage -PackageId 'Microsoft.VisualStudioCode' -WhatIf
+        Install-IctWinGetPackage -PackageId 'Microsoft.VisualStudioCode' -WhatIf
 
         Shows what would be installed without making any changes.
     .EXAMPLE
         $packages = @('Microsoft.VisualStudioCode', 'Git.Git', 'Microsoft.PowerToys')
-        $packages | Install-WinGetPackage
+        $packages | Install-IctWinGetPackage
 
         Installs an array of packages piped in from a variable.
     .NOTES
         Requires the Microsoft.Winget.Client module.
     .LINK
-        Export-WinGetPackage
+        Export-IctWinGetPackage
     .LINK
-        Import-WinGetPackage
+        Import-IctWinGetPackage
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param (
@@ -58,7 +58,7 @@ function Install-WinGetPackage {
                         Write-Host "Installing '$id'..."
                         Write-Verbose "Running: Install-WinGetPackage -Id '$id' -Source '$Source' -Mode Silent"
 
-                        Invoke-WinGetPackageInstall -Id $id -Source $Source
+                        Install-WinGetPackage -Id $id -Source $Source -Mode Silent
 
                         Write-Verbose "Successfully installed '$id'."
                     }

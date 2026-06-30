@@ -1,11 +1,11 @@
-function Export-WinGetPackage {
+function Export-IctWinGetPackage {
     <#
     .SYNOPSIS
         Exports installed WinGet packages to a CSV file.
     .DESCRIPTION
         Retrieves all packages installed via a WinGet source and exports them to a
         semicolon-delimited CSV file, excluding system-managed MSIX and ARP entries.
-        The output can later be used with Import-WinGetPackage to reproduce the
+        The output can later be used with Import-IctWinGetPackage to reproduce the
         installation on another machine.
     .PARAMETER Path
         Full path to the output CSV file. The file must not already exist.
@@ -14,19 +14,19 @@ function Export-WinGetPackage {
     .PARAMETER Delimiter
         Delimiter character used in the CSV file. Defaults to ';'.
     .EXAMPLE
-        Export-WinGetPackage -Path 'C:\Temp\winget-packages.csv'
+        Export-IctWinGetPackage -Path 'C:\Temp\winget-packages.csv'
 
         Exports all winget-sourced packages to the specified CSV file.
     .EXAMPLE
-        Export-WinGetPackage -Path 'C:\Temp\winget-packages.csv' -Verbose
+        Export-IctWinGetPackage -Path 'C:\Temp\winget-packages.csv' -Verbose
 
         Exports packages with verbose progress output.
     .NOTES
         Requires the Microsoft.Winget.Client module.
     .LINK
-        Import-WinGetPackage
+        Import-IctWinGetPackage
     .LINK
-        Install-WinGetPackage
+        Install-IctWinGetPackage
     #>
     [CmdletBinding()]
     param (
@@ -40,7 +40,7 @@ function Export-WinGetPackage {
         [char]$Delimiter = ';'
     )
 
-    Write-Verbose "Starting Export-WinGetPackage"
+    Write-Verbose "Starting Export-IctWinGetPackage"
     Write-Verbose "Output path: $Path"
     Write-Verbose "Source: $Source"
 

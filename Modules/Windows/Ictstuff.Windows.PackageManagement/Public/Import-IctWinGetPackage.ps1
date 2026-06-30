@@ -1,29 +1,29 @@
-function Import-WinGetPackage {
+function Import-IctWinGetPackage {
     <#
     .SYNOPSIS
         Reads a WinGet package list from a CSV file and installs missing packages.
     .DESCRIPTION
-        Imports a CSV file previously created by Export-WinGetPackage and passes
-        the package IDs to Install-WinGetPackage. Packages already present on
+        Imports a CSV file previously created by Export-IctWinGetPackage and passes
+        the package IDs to Install-IctWinGetPackage. Packages already present on
         the system are skipped automatically.
     .PARAMETER Path
         Full path to the CSV file to import. Must contain an 'Id' column.
     .PARAMETER Delimiter
         Delimiter character used in the CSV file. Defaults to ';'.
     .EXAMPLE
-        Import-WinGetPackage -Path 'C:\Temp\winget-packages.csv'
+        Import-IctWinGetPackage -Path 'C:\Temp\winget-packages.csv'
 
         Reads the CSV and installs any packages not already present.
     .EXAMPLE
-        Import-WinGetPackage -Path 'C:\Temp\winget-packages.csv' -WhatIf
+        Import-IctWinGetPackage -Path 'C:\Temp\winget-packages.csv' -WhatIf
 
         Shows which packages would be installed without making any changes.
     .NOTES
         Requires the Microsoft.Winget.Client PowerShell module.
     .LINK
-        Export-WinGetPackage
+        Export-IctWinGetPackage
     .LINK
-        Install-WinGetPackage
+        Install-IctWinGetPackage
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param (
@@ -34,7 +34,7 @@ function Import-WinGetPackage {
         [char]$Delimiter = ';'
     )
 
-    Write-Verbose "Starting Import-WinGetPackage"
+    Write-Verbose "Starting Import-IctWinGetPackage"
     Write-Verbose "Input path: $Path"
 
     if (-not (Test-Path -Path $Path)) {
@@ -60,7 +60,7 @@ function Import-WinGetPackage {
         Write-Verbose "Found $($packageIds.Count) package ID(s) in CSV."
 
         if ($PSCmdlet.ShouldProcess($Path, 'Install packages from CSV')) {
-            Install-WinGetPackage -PackageId $packageIds
+            Install-IctWinGetPackage -PackageId $packageIds
         }
     }
     catch {
