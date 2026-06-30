@@ -1,0 +1,13 @@
+#!/bin/sh
+# Git looks for a hook file named exactly "pre-commit" (no extension), but
+# PowerShell will only run files ending in .ps1. This wrapper just hands off
+# to the real implementation. Works on Windows (via Git Bash's sh.exe),
+# Linux and macOS.
+DIR="$(cd "$(dirname "$0")" && pwd)"
+
+if ! command -v pwsh >/dev/null 2>&1; then
+    echo "pwsh (PowerShell 7+) was not found on PATH. Install it from https://aka.ms/powershell, or skip this check for one commit with: git commit --no-verify" >&2
+    exit 1
+fi
+
+exec pwsh -NoProfile -NonInteractive -File "$DIR/pre-commit.ps1" "$@"

@@ -1,0 +1,5 @@
+{
+    "files.eol": "\n",
+    "powershell.scriptAnalysis.enable": true,
+    "powershell.scriptAnalysis.settingsPath": "PSScriptAnalyzerSettings.psd1"
+}

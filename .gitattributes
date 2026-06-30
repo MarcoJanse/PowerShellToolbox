@@ -1,0 +1,33 @@
+# Normalize all text files to LF line endings in the repository.
+# Git checks files out with LF on every OS; only your editor/OS may show
+# them differently. This keeps diffs clean across Windows, Linux and macOS.
+* text=auto eol=lf
+
+# PowerShell source
+*.ps1   text eol=lf
+*.psm1  text eol=lf
+*.psd1  text eol=lf
+*.ps1xml text eol=lf
+
+# Other text formats commonly found alongside PowerShell projects
+*.md    text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.xml   text eol=lf
+*.txt   text eol=lf
+.gitattributes text eol=lf
+.gitignore     text eol=lf
+
+# Windows-only batch/cmd launchers genuinely need CRLF to run correctly
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# Binary formats - never touch line endings
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.zip   binary
+*.dll   binary
+*.exe   binary
