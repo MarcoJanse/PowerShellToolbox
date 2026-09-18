@@ -1,3 +1,5 @@
+#Requires -Modules Microsoft.Graph.Authentication, Microsoft.Graph.Users, Microsoft.Graph.Identity.DirectoryManagement
+
 <#
 .SYNOPSIS
     Builds a per-user license matrix (one True/False column per licensed product) and
@@ -49,12 +51,13 @@
     Claude Desktop client using a written prompt request by Marco Janse.
     ----------------------------------------------------------------------------------
 
-    Version: 1.0
+    Version: 1.1
     Last modified on: 2026-09-18
     By Claude AI and Marco Janse
 
     Version history:
 
+    1.1 - Add required modules
     1.0 - Initial generated version by Claude Sonnet 5 and modified by Marco Janse
 
 .EXAMPLE
