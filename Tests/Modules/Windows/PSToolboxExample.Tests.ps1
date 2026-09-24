@@ -7,7 +7,7 @@
          already loaded in your session.
       2. Mock external/system calls (here: Get-CimInstance) so tests run
          anywhere, fast, with no dependency on the machine's real disks.
-      3. One Describe per function, one It per behaviour you're checking.
+      3. One Describe per function, one It per behavior you're checking.
     See docs/Testing-and-Linting.md for a beginner walkthrough.
 #>
 
@@ -25,8 +25,8 @@ Describe 'Get-DiskSpaceReport' {
     BeforeAll {
         Mock -ModuleName PSToolboxExample Get-CimInstance {
             @(
-                [pscustomobject]@{ DeviceID = 'C:'; Size = 100GB; FreeSpace = 25GB },
-                [pscustomobject]@{ DeviceID = 'D:'; Size = 200GB; FreeSpace = 150GB }
+                [PSCustomObject]@{ DeviceID = 'C:'; Size = 100GB; FreeSpace = 25GB },
+                [PSCustomObject]@{ DeviceID = 'D:'; Size = 200GB; FreeSpace = 150GB }
             )
         }
     }
