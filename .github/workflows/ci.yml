@@ -2,16 +2,18 @@ name: Lint and Test
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint-and-test:
-    # Windows, not ubuntu: this repo's scripts lean heavily on Windows-only
-    # cmdlets and modules (CIM/WMI, ActiveDirectory, etc.) that either fail
-    # to resolve or can't be installed at all on Linux runners.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: windows-latest
 
     steps:
@@ -22,7 +24,7 @@ jobs:
         shell: pwsh
         run: |
           Install-PSResource -Name PSScriptAnalyzer -TrustRepository -Scope CurrentUser
-          Install-PSResource -Name Pester -Version '5.*' -TrustRepository -Scope CurrentUser
+          Install-PSResource -Name Pester -Version '[6.0.0, 7.0.0)' -TrustRepository -Scope CurrentUser
 
       - name: Install module dependencies declared in manifests
         shell: pwsh
@@ -76,6 +78,7 @@ jobs:
       - name: Run Pester tests
         shell: pwsh
         run: |
+          Import-Module Pester -MinimumVersion 6.0.0 -Force
           $config = New-PesterConfiguration
           $config.Run.Path = './Tests'
           $config.Run.Exit = $true
