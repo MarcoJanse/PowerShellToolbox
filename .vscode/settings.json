@@ -1,5 +1,10 @@
 {
-    "files.eol": "\n",
-    "powershell.scriptAnalysis.enable": true,
-    "powershell.scriptAnalysis.settingsPath": "PSScriptAnalyzerSettings.psd1"
+  "files.eol": "\n",
+  "powershell.scriptAnalysis.enable": true,
+  "powershell.scriptAnalysis.settingsPath": "PSScriptAnalyzerSettings.psd1",
+
+  "[powershell]": {
+    "files.encoding": "utf8bom",
+    "files.autoGuessEncoding": false
+  }
 }
