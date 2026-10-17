@@ -23,11 +23,12 @@ Claude (claude.ai) using a written prompt request by Marco Janse.
 It could NOT be executed where it was written (no PowerShell available) - run it once
 and report any first-run failures.
 ----------------------------------------------------------------------------------
-Version: 1.0
-Last modified on: 2026-10-16
+Version: 1.1
+Last modified on: 2026-10-17
 By Claude AI and Marco Janse
 
 Version history:
+1.1 - Added a check on the output column names and order (for Get-MemberOfDynamicGroups.ps1 v1.4)
 1.0 - Initial simple version (static checks only) for Get-MemberOfDynamicGroups.ps1 v1.3
 #>
 
@@ -63,6 +64,14 @@ BeforeAll {
     $script:Help = $script:Ast.GetHelpContent()
 
     $script:ParamNames = @($script:Ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+
+    # Output columns = the keys of the [PSCustomObject]@{ ... } the script emits, in order.
+    $outputTable = $script:Ast.FindAll({
+            param($node)
+            ($node -is [System.Management.Automation.Language.HashtableAst]) -and
+            (@($node.KeyValuePairs | ForEach-Object { $_.Item1.Value }) -contains 'AuditWindowDays')
+        }, $true) | Select-Object -First 1
+    $script:OutputColumns = @($outputTable.KeyValuePairs | ForEach-Object { $_.Item1.Value })
 
     $script:CommandNames = @($script:Ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true) |
             ForEach-Object { $_.GetCommandName() } | Where-Object { $_ })
@@ -115,6 +124,19 @@ Describe 'Get-MemberOfDynamicGroups.ps1' {
 
         It 'limits -AuditDays to 1-30 (Entra audit log retention)' {
             $script:ScriptText | Should -Match '\[ValidateRange\(1,\s*30\)\]\s*\[int\]\$AuditDays'
+        }
+    }
+
+    Context 'Output columns' {
+        It 'emits exactly the documented columns in the documented order (update this test when you add one)' {
+            $expected = @(
+                'DisplayName', 'ObjectId', 'GroupKind', 'MailEnabled', 'SecurityEnabled', 'TeamsEnabled',
+                'RoleAssignable', 'MembershipRule', 'SourceGroups', 'SourceGroupsSyncedFromAD',
+                'SourceGroupsRoleAssignable', 'ProcessingState', 'CreatedDateTime', 'MemberCount',
+                'Owners', 'OwnerCount', 'HasLicenses', 'Licenses', 'LastGroupChange',
+                'LastGroupChangeAction', 'LastMembershipChange', 'AuditWindowDays'
+            )
+            $script:OutputColumns -join ',' | Should -Be ($expected -join ',')
         }
     }
 
