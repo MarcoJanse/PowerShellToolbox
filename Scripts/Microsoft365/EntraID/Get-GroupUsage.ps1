@@ -16,9 +16,10 @@ Graph calls does not grow with the number of groups. Per group it reports:
   - Conditional Access policies that include or exclude the group (with the policy state)
   - enterprise applications the group is assigned to
   - Intune objects the group is assigned to or excluded from: configuration profiles,
-    settings catalog / endpoint security policies, compliance policies, administrative
-    templates, apps, PowerShell scripts, remediations, Autopilot profiles, enrollment
-    configurations and Windows update profiles
+    settings catalog / endpoint security policies, security baselines, compliance
+    policies, administrative templates, apps, app configuration and app protection
+    policies, scripts, remediations, Autopilot profiles, enrollment configurations,
+    Windows update profiles, and Intune role assignments (as administrators or scope)
   - groups and administrative units the group is a direct member of (nesting)
   - other memberOf dynamic groups that use this group as a source group, so you can
     spot chains where one frozen group feeds another
@@ -58,7 +59,8 @@ Requires: Microsoft.Graph.Authentication, Microsoft.Graph.Groups,
 Scopes:   Group.Read.All, GroupMember.Read.All, Directory.Read.All (enterprise app
           assignments), Policy.Read.All (not needed with -SkipConditionalAccess),
           DeviceManagementConfiguration.Read.All, DeviceManagementApps.Read.All,
-          DeviceManagementServiceConfig.Read.All (not needed with -SkipIntune)
+          DeviceManagementServiceConfig.Read.All, DeviceManagementScripts.Read.All,
+          DeviceManagementRBAC.Read.All (none of these are needed with -SkipIntune)
           All read-only. Reading Conditional Access and Intune data also needs a
           suitable directory role (for example Global Reader plus an Intune read role).
 
@@ -71,12 +73,15 @@ role assignments (Azure Resource Manager, not Graph), entitlement management acc
 packages and auto-assignment policies, dynamic administrative units, app protection
 policies, and anything that references the group by name instead of by object ID.
 
-Intune: the list of Intune endpoints is the $intuneEndpoints table in section 4. Three
-of them (device configurations, settings catalog policies, apps) were checked against
-the Microsoft Learn documentation; the others are best effort. An endpoint that does not
-exist in your tenant or is not licensed is skipped with a warning and named in ScanGaps.
-Settings catalog policies and several others only exist in the Graph beta endpoint,
-which Microsoft can change without notice.
+Intune: the list of Intune endpoints is the $intuneEndpoints table in section 4. It was
+extended in v1.1 after comparing it with the community script Get-IntuneAssignments by
+amirjs (github.com/amirjs/Get-IntuneAssignments, MIT license), which reads the same kind
+of data. Only device configurations, settings catalog policies and apps were
+checked against the Microsoft Learn documentation; the rest follows that script and is
+best effort. An endpoint that does not exist in your tenant or is not licensed is skipped
+with a warning and named in ScanGaps. Most of the endpoints only exist in the Graph beta
+endpoint, which Microsoft can change without notice. Cloud PC provisioning policies,
+Cloud PC roles and assignment filters are not scanned.
 
 Nesting: the "NestedIn" column uses the direct memberOf call of the group. Whether
 administrative units show up in that result was not confirmed in the documentation.
@@ -89,11 +94,15 @@ It has NOT been executed or tested yet: no PowerShell was available where it was
 written. Windows PowerShell 5.1 has not been tested either.
 Test with -GroupId and -SkipIntune first, then add the Intune scan.
 ----------------------------------------------------------------------------------
-Version: 1.0
+Version: 1.1
 Last modified on: 2026-10-19
 By Claude AI and Marco Janse
 
 Version history:
+1.1 - Intune scan extended after comparing with Get-IntuneAssignments (amirjs): security
+      baselines, settings catalog compliance, update rings, shell scripts, branding,
+      WDAC, app configuration, app protection, terms and conditions and Intune role
+      assignments; per-endpoint choice between $expand and per-item assignment calls
 1.0 - Initial version (companion to Get-MemberOfDynamicGroups.ps1 v1.4)
 
 .EXAMPLE
@@ -189,7 +198,8 @@ function Get-GraphPagedItem {
 $requiredScopes = @('Group.Read.All', 'GroupMember.Read.All', 'Directory.Read.All')
 if (-not $SkipConditionalAccess) { $requiredScopes += 'Policy.Read.All' }
 if (-not $SkipIntune) {
-    $requiredScopes += 'DeviceManagementConfiguration.Read.All', 'DeviceManagementApps.Read.All', 'DeviceManagementServiceConfig.Read.All'
+    $requiredScopes += 'DeviceManagementConfiguration.Read.All', 'DeviceManagementApps.Read.All', 'DeviceManagementServiceConfig.Read.All',
+    'DeviceManagementScripts.Read.All', 'DeviceManagementRBAC.Read.All'
 }
 
 $context = Get-MgContext
@@ -297,37 +307,62 @@ else {
 #    change what is scanned. 'v1.0' and 'beta' are the Graph versions.
 # ---------------------------------------------------------------------------
 $intuneEndpoints = @(
-    @{ Label = 'Configuration profile';        Path = 'v1.0/deviceManagement/deviceConfigurations' }
-    @{ Label = 'Settings catalog / endpoint security policy'; Path = 'beta/deviceManagement/configurationPolicies' }
-    @{ Label = 'Compliance policy';            Path = 'v1.0/deviceManagement/deviceCompliancePolicies' }
-    @{ Label = 'Administrative template';      Path = 'v1.0/deviceManagement/groupPolicyConfigurations' }
-    @{ Label = 'App';                          Path = 'v1.0/deviceAppManagement/mobileApps' }
-    @{ Label = 'PowerShell script';            Path = 'v1.0/deviceManagement/deviceManagementScripts' }
-    @{ Label = 'Remediation';                  Path = 'beta/deviceManagement/deviceHealthScripts' }
-    @{ Label = 'Autopilot profile';            Path = 'v1.0/deviceManagement/windowsAutopilotDeploymentProfiles' }
-    @{ Label = 'Enrollment configuration';     Path = 'v1.0/deviceManagement/deviceEnrollmentConfigurations' }
-    @{ Label = 'Feature update profile';       Path = 'beta/deviceManagement/windowsFeatureUpdateProfiles' }
-    @{ Label = 'Quality update profile';       Path = 'beta/deviceManagement/windowsQualityUpdateProfiles' }
-    @{ Label = 'Driver update profile';        Path = 'beta/deviceManagement/windowsDriverUpdateProfiles' }
+    # Expand = $true : try $expand=assignments (one call). Expand = $false : read /assignments per item.
+    @{ Label = 'Configuration profile';                       Path = 'v1.0/deviceManagement/deviceConfigurations';                 Expand = $true }
+    @{ Label = 'Settings catalog / endpoint security policy'; Path = 'beta/deviceManagement/configurationPolicies';                Expand = $true }
+    @{ Label = 'Security baseline';                           Path = 'beta/deviceManagement/intents';                              Expand = $true }
+    @{ Label = 'Compliance policy';                           Path = 'beta/deviceManagement/deviceCompliancePolicies';             Expand = $true }
+    @{ Label = 'Compliance policy (settings catalog)';        Path = 'beta/deviceManagement/compliancePolicies';                   Expand = $true }
+    @{ Label = 'Administrative template';                     Path = 'beta/deviceManagement/groupPolicyConfigurations';            Expand = $true }
+    @{ Label = 'PowerShell script';                           Path = 'beta/deviceManagement/deviceManagementScripts';              Expand = $true }
+    @{ Label = 'macOS shell script';                          Path = 'beta/deviceManagement/deviceShellScripts';                   Expand = $true }
+    @{ Label = 'macOS custom attribute';                      Path = 'beta/deviceManagement/deviceCustomAttributeShellScripts';    Expand = $true }
+    @{ Label = 'Remediation';                                 Path = 'beta/deviceManagement/deviceHealthScripts';                  Expand = $true }
+    @{ Label = 'Autopilot profile';                           Path = 'beta/deviceManagement/windowsAutopilotDeploymentProfiles';   Expand = $true }
+    @{ Label = 'Enrollment configuration';                    Path = 'beta/deviceManagement/deviceEnrollmentConfigurations';       Expand = $true }
+    @{ Label = 'Branding profile';                            Path = 'beta/deviceManagement/intuneBrandingProfiles';               Expand = $true }
+    @{ Label = 'Feature update profile';                      Path = 'beta/deviceManagement/windowsFeatureUpdateProfiles';         Expand = $true }
+    @{ Label = 'Quality update profile';                      Path = 'beta/deviceManagement/windowsQualityUpdateProfiles';         Expand = $true }
+    @{ Label = 'Update ring';                                 Path = 'beta/deviceManagement/windowsQualityUpdatePolicies';         Expand = $true }
+    @{ Label = 'Driver update profile';                       Path = 'beta/deviceManagement/windowsDriverUpdateProfiles';          Expand = $true }
+    @{ Label = 'WDAC supplemental policy';                    Path = 'beta/deviceAppManagement/wdacSupplementalPolicies';          Expand = $true }
+    @{ Label = 'Windows information protection policy';       Path = 'beta/deviceAppManagement/mdmWindowsInformationProtectionPolicies'; Expand = $true }
+    @{ Label = 'App';                                         Path = 'v1.0/deviceAppManagement/mobileApps';                        Expand = $false }
+    @{ Label = 'App configuration policy';                    Path = 'beta/deviceAppManagement/mobileAppConfigurations';           Expand = $false }
+    @{ Label = 'iOS app provisioning profile';                Path = 'beta/deviceAppManagement/iosLobAppProvisioningConfigurations'; Expand = $false }
+    @{ Label = 'App configuration (managed apps)';            Path = 'beta/deviceAppManagement/targetedManagedAppConfigurations';  Expand = $false }
+    @{ Label = 'App protection policy (Android)';             Path = 'beta/deviceAppManagement/androidManagedAppProtections';      Expand = $false }
+    @{ Label = 'App protection policy (iOS)';                 Path = 'beta/deviceAppManagement/iosManagedAppProtections';          Expand = $false }
+    @{ Label = 'App protection policy (Windows)';             Path = 'beta/deviceAppManagement/windowsManagedAppProtections';      Expand = $false }
+    @{ Label = 'Terms and conditions';                        Path = 'beta/deviceManagement/termsAndConditions';                   Expand = $false }
 )
 
 $intuneInclude = @{}   # group id -> list of "<type>: <name>"
 $intuneExclude = @{}
 
-# Returns the policies of one endpoint together with their assignments. It first tries
-# $expand=assignments (one call); when that is not supported or returns no assignments
-# property, it reads /assignments per item instead (slower, always works).
+# Returns the policies of one endpoint together with their assignments. With -Expand it
+# first tries $expand=assignments (one call); when that is not supported, or the items
+# come back without an assignments property, it reads /assignments per item instead
+# (slower, always works). Apps and app protection policies skip the expand attempt.
 function Get-IntuneItemWithAssignment {
-    param([string]$Path)
+    param(
+        [string]$Path,
+        [bool]$Expand
+    )
 
     $baseUri = 'https://graph.microsoft.com/' + $Path
     $items = $null
-    $expanded = $true
-    try {
-        $items = @(Get-GraphPagedItem -Uri ($baseUri + '?$expand=assignments'))
+    $expanded = $false
+    if ($Expand) {
+        try {
+            $items = @(Get-GraphPagedItem -Uri ($baseUri + '?$expand=assignments'))
+            $expanded = $true
+        }
+        catch {
+            $items = $null
+        }
     }
-    catch {
-        $expanded = $false
+    if ($null -eq $items) {
         $items = @(Get-GraphPagedItem -Uri $baseUri)
     }
 
@@ -363,7 +398,7 @@ else {
         Write-Verbose "Reading $($endpoint.Path)"
 
         try {
-            foreach ($item in (Get-IntuneItemWithAssignment -Path $endpoint.Path)) {
+            foreach ($item in (Get-IntuneItemWithAssignment -Path $endpoint.Path -Expand $endpoint.Expand)) {
                 foreach ($assignment in $item.Assignments) {
                     $target = $assignment['target']
                     if (-not $target) { continue }
@@ -388,6 +423,32 @@ else {
         }
     }
     Write-Progress -Activity "Reading Intune assignments" -Completed
+
+    # Intune role-based access control: a group can be the administrators of a role
+    # assignment (members) or the scope of one (resourceScopes). These objects have no
+    # /assignments collection, so the group ids are read from the role assignment itself.
+    try {
+        foreach ($roleAssignment in (Get-GraphPagedItem -Uri 'https://graph.microsoft.com/beta/deviceManagement/roleAssignments')) {
+            $roleName = $roleAssignment['displayName']
+            if (-not $roleName) { $roleName = $roleAssignment['id'] }
+            foreach ($id in @($roleAssignment['members'])) {
+                if ($id -and $targetIds.Contains($id)) {
+                    if (-not $intuneInclude.ContainsKey($id)) { $intuneInclude[$id] = [System.Collections.Generic.List[string]]::new() }
+                    $intuneInclude[$id].Add("Intune role assignment (administrators): $roleName")
+                }
+            }
+            foreach ($id in @($roleAssignment['resourceScopes'])) {
+                if ($id -and $targetIds.Contains($id)) {
+                    if (-not $intuneInclude.ContainsKey($id)) { $intuneInclude[$id] = [System.Collections.Generic.List[string]]::new() }
+                    $intuneInclude[$id].Add("Intune role assignment (scope): $roleName")
+                }
+            }
+        }
+    }
+    catch {
+        Write-Warning "Skipped 'Intune role assignments': $($_.Exception.Message)"
+        $scanGaps.Add('Intune: role assignments')
+    }
 }
 
 # ---------------------------------------------------------------------------
