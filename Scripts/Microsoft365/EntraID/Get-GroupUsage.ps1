@@ -1,0 +1,504 @@
+﻿#Requires -Version 5.1
+#Requires -Modules Microsoft.Graph.Authentication, Microsoft.Graph.Groups, Microsoft.Graph.Identity.SignIns
+
+<#
+.SYNOPSIS
+Shows where Entra ID groups are used (Conditional Access, enterprise apps, Intune,
+nesting, memberOf source groups) and returns one object per group to the pipeline.
+By default it checks every dynamic group that uses the memberOf rule operator.
+
+.DESCRIPTION
+Microsoft Graph has no single "where is this group used" call, so this script collects
+it from several places. The tenant-wide lists (Conditional Access policies, Intune
+assignments) are read ONCE and matched against all groups in memory, so the number of
+Graph calls does not grow with the number of groups. Per group it reports:
+
+  - Conditional Access policies that include or exclude the group (with the policy state)
+  - enterprise applications the group is assigned to
+  - Intune objects the group is assigned to or excluded from: configuration profiles,
+    settings catalog / endpoint security policies, compliance policies, administrative
+    templates, apps, PowerShell scripts, remediations, Autopilot profiles, enrollment
+    configurations and Windows update profiles
+  - groups and administrative units the group is a direct member of (nesting)
+  - other memberOf dynamic groups that use this group as a source group, so you can
+    spot chains where one frozen group feeds another
+
+This answers "is anything still pointing at this group?". It does NOT prove that a group
+is unused: see the NOTES for what is not covered. The ScanGaps column lists every part
+of the scan that was skipped or failed for that run, so an empty result is never
+mistaken for "unused" when a part of the scan did not run.
+
+This script has no export logic of its own - it just emits clean PSCustomObjects.
+Run it bare and PowerShell's default formatter displays a table in the console.
+Pipe it anywhere else and the objects flow through normally.
+
+.PARAMETER GroupId
+Optional. One or more group object IDs to check instead of every memberOf dynamic group.
+Any group is accepted, not only memberOf groups - for example, pass the source groups
+from the Get-MemberOfDynamicGroups.ps1 output to see where those are used.
+
+.PARAMETER SkipConditionalAccess
+Skip the Conditional Access scan (no Policy.Read.All scope needed). The Conditional
+Access columns stay empty and ScanGaps says so.
+
+.PARAMETER SkipIntune
+Skip the Intune scan (no DeviceManagement* scopes needed). The Intune columns stay
+empty and ScanGaps says so. Useful for a quick first run: the Intune scan is the slowest
+part because it reads the assignments of every policy and app.
+
+.PARAMETER Disconnect
+Optional. Disconnect from Microsoft Graph (Disconnect-MgGraph) when the script is done,
+but only if this script created the connection itself. A session you were already
+connected to is never disconnected. Without this switch, the script prints a reminder
+instead when it created the connection.
+
+.NOTES
+Requires: Microsoft.Graph.Authentication, Microsoft.Graph.Groups,
+          Microsoft.Graph.Identity.SignIns
+Scopes:   Group.Read.All, GroupMember.Read.All, Directory.Read.All (enterprise app
+          assignments), Policy.Read.All (not needed with -SkipConditionalAccess),
+          DeviceManagementConfiguration.Read.All, DeviceManagementApps.Read.All,
+          DeviceManagementServiceConfig.Read.All (not needed with -SkipIntune)
+          All read-only. Reading Conditional Access and Intune data also needs a
+          suitable directory role (for example Global Reader plus an Intune read role).
+
+If you're already connected to Graph, this script reuses that session automatically.
+It only warns if the session looks like it is missing a scope.
+
+Not covered (check these separately): Exchange Online (mail flow rules, shared mailbox
+permissions), SharePoint and Teams permissions that name the group, Planner, Azure RBAC
+role assignments (Azure Resource Manager, not Graph), entitlement management access
+packages and auto-assignment policies, dynamic administrative units, app protection
+policies, and anything that references the group by name instead of by object ID.
+
+Intune: the list of Intune endpoints is the $intuneEndpoints table in section 4. Three
+of them (device configurations, settings catalog policies, apps) were checked against
+the Microsoft Learn documentation; the others are best effort. An endpoint that does not
+exist in your tenant or is not licensed is skipped with a warning and named in ScanGaps.
+Settings catalog policies and several others only exist in the Graph beta endpoint,
+which Microsoft can change without notice.
+
+Nesting: the "NestedIn" column uses the direct memberOf call of the group. Whether
+administrative units show up in that result was not confirmed in the documentation.
+
+----------------------------------------------------------------------------------
+### Disclaimer: ###
+This script was generated by Claude AI on October 19th 2026 using Sonnet 5.5 on
+Claude (claude.ai) using a written prompt request by Marco Janse.
+It has NOT been executed or tested yet: no PowerShell was available where it was
+written. Windows PowerShell 5.1 has not been tested either.
+Test with -GroupId and -SkipIntune first, then add the Intune scan.
+----------------------------------------------------------------------------------
+Version: 1.0
+Last modified on: 2026-10-19
+By Claude AI and Marco Janse
+
+Version history:
+1.0 - Initial version (companion to Get-MemberOfDynamicGroups.ps1 v1.4)
+
+.EXAMPLE
+.\Get-GroupUsage.ps1
+
+Checks every memberOf dynamic group in the tenant and displays the result in the
+console using PowerShell's default table formatting.
+
+.EXAMPLE
+.\Get-GroupUsage.ps1 -GroupId '00000000-0000-0000-0000-000000000000' -SkipIntune -Verbose
+
+Quick test run against a single group, without the slow Intune scan.
+
+.EXAMPLE
+.\Get-GroupUsage.ps1 | Where-Object { $_.ConditionalAccessExclude -or $_.ConditionalAccessInclude } | Format-Table DisplayName, ConditionalAccessInclude, ConditionalAccessExclude
+
+Shows only the groups that a Conditional Access policy depends on. A frozen group in a
+Conditional Access exclusion or inclusion is the most urgent to resolve.
+
+.EXAMPLE
+.\Get-GroupUsage.ps1 -Disconnect | Where-Object { -not $_.UsageFound -and -not $_.ScanGaps } | Format-Table DisplayName, ObjectId
+
+Lists groups where nothing was found AND every part of the scan ran: the best
+candidates for "can be removed". Check with the owners before deleting anything,
+because the places listed under NOTES are not covered.
+
+.EXAMPLE
+.\Get-GroupUsage.ps1 -GroupId (Import-Csv .\memberOf-groups.csv).ObjectId | Export-Csv -Path .\group-usage.csv -NoTypeInformation -Encoding UTF8
+
+Reads the group IDs from the CSV exported by Get-MemberOfDynamicGroups.ps1 and writes the
+usage report to a CSV.
+#>
+
+[CmdletBinding()]
+param(
+    [ValidatePattern('^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$')]
+    [string[]]$GroupId,
+
+    [switch]$SkipConditionalAccess,
+
+    [switch]$SkipIntune,
+
+    [switch]$Disconnect
+)
+
+$ErrorActionPreference = 'Stop'
+
+# ---------------------------------------------------------------------------
+# Graph session cleanup. Runs on every exit path: normal end, 'no groups found',
+# and (via the trap below) a terminating error. It only acts on a connection that
+# this script created, so a session you were already using is never touched.
+# ---------------------------------------------------------------------------
+$connectedByScript = $false
+
+function Complete-GraphSession {
+    param(
+        [bool]$CreatedConnection,
+        [bool]$SignOut
+    )
+
+    if (-not $CreatedConnection) { return }
+
+    if ($SignOut) {
+        $null = Disconnect-MgGraph
+        Write-Host "Disconnected from Graph." -ForegroundColor Green
+    }
+    else {
+        Write-Host -ForegroundColor Yellow "You are still connected to Graph. Disconnect with Disconnect-MgGraph if you are done."
+    }
+}
+
+trap {
+    Complete-GraphSession -CreatedConnection $connectedByScript -SignOut $Disconnect.IsPresent
+    throw $_
+}
+
+# Reads every page of a Graph collection and returns the items (hashtables).
+function Get-GraphPagedItem {
+    param([string]$Uri)
+
+    $next = $Uri
+    while ($next) {
+        $page = Invoke-MgGraphRequest -Method GET -Uri $next -OutputType Hashtable
+        if ($page.ContainsKey('value')) { $page['value'] }
+        if ($page.ContainsKey('@odata.nextLink')) { $next = $page['@odata.nextLink'] } else { $next = $null }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 1. Connect (reuse an existing session if there is one -
+#    otherwise prompt for delegated login)
+# ---------------------------------------------------------------------------
+$requiredScopes = @('Group.Read.All', 'GroupMember.Read.All', 'Directory.Read.All')
+if (-not $SkipConditionalAccess) { $requiredScopes += 'Policy.Read.All' }
+if (-not $SkipIntune) {
+    $requiredScopes += 'DeviceManagementConfiguration.Read.All', 'DeviceManagementApps.Read.All', 'DeviceManagementServiceConfig.Read.All'
+}
+
+$context = Get-MgContext
+if (-not $context) {
+    Write-Host "No existing Graph session found - connecting interactively." -ForegroundColor Cyan
+    Connect-MgGraph -Scopes $requiredScopes -NoWelcome
+    $connectedByScript = $true
+}
+else {
+    Write-Host "Reusing existing Graph session ($($context.Account))." -ForegroundColor Cyan
+
+    # Courtesy check only - app-only sessions expose roles, not scopes, so skip those.
+    if ($context.AuthType -eq 'Delegated') {
+        $missingScopes = $requiredScopes | Where-Object { $_ -notin $context.Scopes }
+        if ($missingScopes) {
+            Write-Warning "The current session may be missing scope(s): $($missingScopes -join ', '). Calls may fail - reconnect with Connect-MgGraph -Scopes if they do."
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 2. Get the groups to check, and all memberOf dynamic groups (the second list is
+#    needed to find groups that use one of the checked groups as a source group)
+# ---------------------------------------------------------------------------
+Write-Host "Retrieving groups..." -ForegroundColor Cyan
+
+$groupProperties = 'Id', 'DisplayName', 'MembershipRule'
+
+$dynamicGroups = Get-MgGroup -All -ConsistencyLevel eventual -CountVariable groupCount `
+    -Filter "groupTypes/any(c:c eq 'DynamicMembership')" `
+    -Property $groupProperties
+$memberOfGroups = @($dynamicGroups | Where-Object { $_.MembershipRule -match 'memberof' })
+
+if ($GroupId) {
+    $targets = foreach ($id in ($GroupId | Select-Object -Unique)) {
+        try {
+            Get-MgGroup -GroupId $id -Property $groupProperties
+        }
+        catch {
+            Write-Warning "Group '$id' could not be read ($($_.Exception.Message)) - skipped."
+        }
+    }
+    $targets = @($targets)
+}
+else {
+    $targets = $memberOfGroups
+}
+
+if ($targets.Count -eq 0) {
+    Write-Warning "No groups to check were found."
+    Complete-GraphSession -CreatedConnection $connectedByScript -SignOut $Disconnect.IsPresent
+    return
+}
+
+Write-Host "Checking $($targets.Count) group(s)." -ForegroundColor Cyan
+
+$targetIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+foreach ($target in $targets) { [void]$targetIds.Add($target.Id) }
+
+# Parts of the scan that did not run or failed. They end up in the ScanGaps column.
+$scanGaps = [System.Collections.Generic.List[string]]::new()
+
+# ---------------------------------------------------------------------------
+# 3. Conditional Access: read all policies ONCE, index by group id
+# ---------------------------------------------------------------------------
+$caInclude = @{}   # group id -> list of "policy name (state)"
+$caExclude = @{}
+
+if ($SkipConditionalAccess) {
+    Write-Host "Skipping Conditional Access (-SkipConditionalAccess)." -ForegroundColor DarkGray
+    $scanGaps.Add('ConditionalAccess')
+}
+else {
+    Write-Host "Reading Conditional Access policies..." -ForegroundColor Cyan
+    try {
+        $policies = @(Get-MgIdentityConditionalAccessPolicy -All)
+        foreach ($policy in $policies) {
+            $label = "$($policy.DisplayName) ($($policy.State))"
+            foreach ($id in @($policy.Conditions.Users.IncludeGroups)) {
+                if ($id -and $targetIds.Contains($id)) {
+                    if (-not $caInclude.ContainsKey($id)) { $caInclude[$id] = [System.Collections.Generic.List[string]]::new() }
+                    $caInclude[$id].Add($label)
+                }
+            }
+            foreach ($id in @($policy.Conditions.Users.ExcludeGroups)) {
+                if ($id -and $targetIds.Contains($id)) {
+                    if (-not $caExclude.ContainsKey($id)) { $caExclude[$id] = [System.Collections.Generic.List[string]]::new() }
+                    $caExclude[$id].Add($label)
+                }
+            }
+        }
+        Write-Host "Read $($policies.Count) Conditional Access policy(ies)." -ForegroundColor DarkGray
+    }
+    catch {
+        Write-Warning "Could not read Conditional Access policies ($($_.Exception.Message)). The Conditional Access columns will be empty."
+        $scanGaps.Add('ConditionalAccess')
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 4. Intune: read the assignments of every policy / app ONCE, keep only those that
+#    point at one of the checked groups.
+#    Each endpoint is tried on its own, so one that does not exist (or is not licensed)
+#    is skipped with a warning instead of stopping the run. Add or remove rows to
+#    change what is scanned. 'v1.0' and 'beta' are the Graph versions.
+# ---------------------------------------------------------------------------
+$intuneEndpoints = @(
+    @{ Label = 'Configuration profile';        Path = 'v1.0/deviceManagement/deviceConfigurations' }
+    @{ Label = 'Settings catalog / endpoint security policy'; Path = 'beta/deviceManagement/configurationPolicies' }
+    @{ Label = 'Compliance policy';            Path = 'v1.0/deviceManagement/deviceCompliancePolicies' }
+    @{ Label = 'Administrative template';      Path = 'v1.0/deviceManagement/groupPolicyConfigurations' }
+    @{ Label = 'App';                          Path = 'v1.0/deviceAppManagement/mobileApps' }
+    @{ Label = 'PowerShell script';            Path = 'v1.0/deviceManagement/deviceManagementScripts' }
+    @{ Label = 'Remediation';                  Path = 'beta/deviceManagement/deviceHealthScripts' }
+    @{ Label = 'Autopilot profile';            Path = 'v1.0/deviceManagement/windowsAutopilotDeploymentProfiles' }
+    @{ Label = 'Enrollment configuration';     Path = 'v1.0/deviceManagement/deviceEnrollmentConfigurations' }
+    @{ Label = 'Feature update profile';       Path = 'beta/deviceManagement/windowsFeatureUpdateProfiles' }
+    @{ Label = 'Quality update profile';       Path = 'beta/deviceManagement/windowsQualityUpdateProfiles' }
+    @{ Label = 'Driver update profile';        Path = 'beta/deviceManagement/windowsDriverUpdateProfiles' }
+)
+
+$intuneInclude = @{}   # group id -> list of "<type>: <name>"
+$intuneExclude = @{}
+
+# Returns the policies of one endpoint together with their assignments. It first tries
+# $expand=assignments (one call); when that is not supported or returns no assignments
+# property, it reads /assignments per item instead (slower, always works).
+function Get-IntuneItemWithAssignment {
+    param([string]$Path)
+
+    $baseUri = 'https://graph.microsoft.com/' + $Path
+    $items = $null
+    $expanded = $true
+    try {
+        $items = @(Get-GraphPagedItem -Uri ($baseUri + '?$expand=assignments'))
+    }
+    catch {
+        $expanded = $false
+        $items = @(Get-GraphPagedItem -Uri $baseUri)
+    }
+
+    foreach ($item in $items) {
+        $assignments = $null
+        if ($expanded -and $item.ContainsKey('assignments')) {
+            $assignments = @($item['assignments'])
+        }
+        else {
+            $assignments = @(Get-GraphPagedItem -Uri ($baseUri + '/' + $item['id'] + '/assignments'))
+        }
+
+        $name = $item['displayName']
+        if (-not $name) { $name = $item['name'] }
+        if (-not $name) { $name = $item['id'] }
+
+        [PSCustomObject]@{
+            Name        = $name
+            Assignments = $assignments
+        }
+    }
+}
+
+if ($SkipIntune) {
+    Write-Host "Skipping Intune (-SkipIntune)." -ForegroundColor DarkGray
+    $scanGaps.Add('Intune')
+}
+else {
+    $e = 0
+    foreach ($endpoint in $intuneEndpoints) {
+        $e++
+        Write-Progress -Activity "Reading Intune assignments" -Status "$e of $($intuneEndpoints.Count) - $($endpoint.Label)" -PercentComplete (($e / $intuneEndpoints.Count) * 100)
+        Write-Verbose "Reading $($endpoint.Path)"
+
+        try {
+            foreach ($item in (Get-IntuneItemWithAssignment -Path $endpoint.Path)) {
+                foreach ($assignment in $item.Assignments) {
+                    $target = $assignment['target']
+                    if (-not $target) { continue }
+                    $id = $target['groupId']
+                    if (-not ($id -and $targetIds.Contains($id))) { continue }
+
+                    $entry = "$($endpoint.Label): $($item.Name)"
+                    if ("$($target['@odata.type'])" -like '*exclusion*') {
+                        if (-not $intuneExclude.ContainsKey($id)) { $intuneExclude[$id] = [System.Collections.Generic.List[string]]::new() }
+                        $intuneExclude[$id].Add($entry)
+                    }
+                    else {
+                        if (-not $intuneInclude.ContainsKey($id)) { $intuneInclude[$id] = [System.Collections.Generic.List[string]]::new() }
+                        $intuneInclude[$id].Add($entry)
+                    }
+                }
+            }
+        }
+        catch {
+            Write-Warning "Skipped '$($endpoint.Label)' ($($endpoint.Path)): $($_.Exception.Message)"
+            $scanGaps.Add("Intune: $($endpoint.Label)")
+        }
+    }
+    Write-Progress -Activity "Reading Intune assignments" -Completed
+}
+
+# ---------------------------------------------------------------------------
+# 5. Which memberOf dynamic groups use one of the checked groups as a source?
+#    (rule text parsing - the same GUID pattern the inventory script uses)
+# ---------------------------------------------------------------------------
+$usedAsSource = @{}   # source group id -> list of dynamic group names
+foreach ($dynamicGroup in $memberOfGroups) {
+    $sourceIds = [regex]::Matches($dynamicGroup.MembershipRule, '[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}') |
+        ForEach-Object { $_.Value } | Select-Object -Unique
+    foreach ($sourceId in $sourceIds) {
+        if ($targetIds.Contains($sourceId) -and $sourceId -ne $dynamicGroup.Id) {
+            if (-not $usedAsSource.ContainsKey($sourceId)) { $usedAsSource[$sourceId] = [System.Collections.Generic.List[string]]::new() }
+            $usedAsSource[$sourceId].Add($dynamicGroup.DisplayName)
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 6. Build one object per group. Per-group calls: enterprise app assignments and
+#    direct memberOf. Multi-value fields are joined into a single string so the
+#    output exports cleanly to CSV/Excel instead of showing "System.Object[]".
+# ---------------------------------------------------------------------------
+$total = $targets.Count
+$i = 0
+$appGapReported = $false
+$nestingGapReported = $false
+
+# Helper: a hashtable lookup that returns an empty array when the key is missing
+function Get-IndexedValue {
+    param([hashtable]$Index, [string]$Key)
+    if ($Index.ContainsKey($Key)) { return @($Index[$Key] | Select-Object -Unique) }
+    return @()
+}
+
+$results = foreach ($group in $targets) {
+    $i++
+    Write-Progress -Activity "Checking group usage" -Status "$i of $total - $($group.DisplayName)" -PercentComplete (($i / $total) * 100)
+    Write-Verbose "Processing $($group.DisplayName) ($($group.Id))"
+
+    # Enterprise applications this group is assigned to
+    $apps = @()
+    try {
+        $apps = @(Get-MgGroupAppRoleAssignment -GroupId $group.Id -All | ForEach-Object { $_.ResourceDisplayName } | Where-Object { $_ } | Select-Object -Unique)
+    }
+    catch {
+        if (-not $appGapReported) {
+            Write-Warning "Could not read enterprise app assignments ($($_.Exception.Message)). The EnterpriseApps column will be empty."
+            $appGapReported = $true
+            $scanGaps.Add('EnterpriseApps')
+        }
+    }
+
+    # Groups (and administrative units) this group is directly a member of
+    $nestedIn = @()
+    try {
+        $nestedIn = @(Get-MgGroupMemberOf -GroupId $group.Id -All | ForEach-Object {
+                $kind = 'Group'
+                if ("$($_.AdditionalProperties['@odata.type'])" -like '*administrativeUnit*') { $kind = 'Administrative unit' }
+                "${kind}: $($_.AdditionalProperties['displayName'])"
+            })
+    }
+    catch {
+        if (-not $nestingGapReported) {
+            Write-Warning "Could not read group nesting ($($_.Exception.Message)). The NestedIn column will be empty."
+            $nestingGapReported = $true
+            $scanGaps.Add('NestedIn')
+        }
+    }
+
+    $caIn = Get-IndexedValue -Index $caInclude -Key $group.Id
+    $caEx = Get-IndexedValue -Index $caExclude -Key $group.Id
+    $inIn = Get-IndexedValue -Index $intuneInclude -Key $group.Id
+    $inEx = Get-IndexedValue -Index $intuneExclude -Key $group.Id
+    $sourceOf = Get-IndexedValue -Index $usedAsSource -Key $group.Id
+
+    $usageCount = $caIn.Count + $caEx.Count + $apps.Count + $inIn.Count + $inEx.Count + $nestedIn.Count + $sourceOf.Count
+
+    [PSCustomObject]@{
+        DisplayName              = $group.DisplayName
+        ObjectId                 = $group.Id
+        UsageFound               = $usageCount -gt 0
+        UsageCount               = $usageCount
+        ConditionalAccessInclude = $caIn -join '; '
+        ConditionalAccessExclude = $caEx -join '; '
+        EnterpriseApps           = $apps -join '; '
+        IntuneIncluded           = $inIn -join '; '
+        IntuneExcluded           = $inEx -join '; '
+        NestedIn                 = $nestedIn -join '; '
+        UsedAsSourceBy           = $sourceOf -join '; '
+        ScanGaps                 = ''
+    }
+}
+
+Write-Progress -Activity "Checking group usage" -Completed
+
+# ScanGaps is the same for every group (it describes the run, not the group), but it
+# is filled in at the end because the per-group steps above can add to it.
+$gapText = (@($scanGaps | Select-Object -Unique)) -join '; '
+foreach ($result in $results) { $result.ScanGaps = $gapText }
+
+if ($gapText) {
+    Write-Warning "Parts of the scan did not run: $gapText. A group without findings is NOT proven unused."
+}
+
+Write-Host "Done. Returning $(@($results).Count) group record(s) to the pipeline.`n" -ForegroundColor Green
+Complete-GraphSession -CreatedConnection $connectedByScript -SignOut $Disconnect.IsPresent
+
+# ---------------------------------------------------------------------------
+# 7. Emit to the pipeline. Run bare -> PowerShell's default table view.
+#    Piped -> flows straight into Export-Csv / Export-Excel / Out-GridView /
+#    Where-Object / whatever comes next.
+# ---------------------------------------------------------------------------
+$results
