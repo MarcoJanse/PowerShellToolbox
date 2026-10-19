@@ -22,11 +22,12 @@ Claude (claude.ai) using a written prompt request by Marco Janse.
 It could NOT be executed where it was written (no PowerShell available) - run it once
 and report any first-run failures.
 ----------------------------------------------------------------------------------
-Version: 1.0
+Version: 1.1
 Last modified on: 2026-10-19
 By Claude AI and Marco Janse
 
 Version history:
+1.1 - Updated for Get-GroupUsage.ps1 v1.2 (-IncludeTeamsAndSites parameter and three output columns)
 1.0 - Initial simple version (static checks only) for Get-GroupUsage.ps1 v1.0
 #>
 
@@ -116,7 +117,7 @@ Describe 'Get-GroupUsage.ps1' {
         }
 
         It 'exposes exactly the documented parameters (update this test when you add one)' {
-            (($script:ParamNames | Sort-Object) -join ',') | Should -Be 'Disconnect,GroupId,SkipConditionalAccess,SkipIntune'
+            (($script:ParamNames | Sort-Object) -join ',') | Should -Be 'Disconnect,GroupId,IncludeTeamsAndSites,SkipConditionalAccess,SkipIntune'
         }
 
         It 'validates -GroupId as a GUID' {
@@ -129,7 +130,7 @@ Describe 'Get-GroupUsage.ps1' {
             $expected = @(
                 'DisplayName', 'ObjectId', 'UsageFound', 'UsageCount', 'ConditionalAccessInclude',
                 'ConditionalAccessExclude', 'EnterpriseApps', 'IntuneIncluded', 'IntuneExcluded',
-                'NestedIn', 'UsedAsSourceBy', 'ScanGaps'
+                'NestedIn', 'UsedAsSourceBy', 'TeamStatus', 'SiteUrl', 'SiteLastModified', 'ScanGaps'
             )
             $script:OutputColumns -join ',' | Should -Be ($expected -join ',')
         }
@@ -204,6 +205,7 @@ Describe 'Get-GroupUsage.ps1' {
             @{ Name = 'GroupId' }
             @{ Name = 'SkipConditionalAccess' }
             @{ Name = 'SkipIntune' }
+            @{ Name = 'IncludeTeamsAndSites' }
             @{ Name = 'Disconnect' }
         ) {
             "$($script:Help.Parameters[$Name.ToUpperInvariant()])".Trim() | Should -Not -BeNullOrEmpty

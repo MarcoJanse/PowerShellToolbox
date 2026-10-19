@@ -47,6 +47,15 @@ Skip the Intune scan (no DeviceManagement* scopes needed). The Intune columns st
 empty and ScanGaps says so. Useful for a quick first run: the Intune scan is the slowest
 part because it reads the assignments of every policy and app.
 
+.PARAMETER IncludeTeamsAndSites
+Optional. For Microsoft 365 groups, also report the status of the Team behind the group
+(Active, Archived or Not found) and the URL and last modification time of the group's
+SharePoint site. Needs two extra read scopes (Team.ReadBasic.All and Sites.Read.All).
+These three columns are informational: they are NOT counted in UsageFound or
+UsageCount, because every Microsoft 365 group has a SharePoint site and that alone says
+nothing about use. A recent SiteLastModified is a hint that people still use the group.
+Without this switch the three columns stay empty.
+
 .PARAMETER Disconnect
 Optional. Disconnect from Microsoft Graph (Disconnect-MgGraph) when the script is done,
 but only if this script created the connection itself. A session you were already
@@ -60,7 +69,8 @@ Scopes:   Group.Read.All, GroupMember.Read.All, Directory.Read.All (enterprise a
           assignments), Policy.Read.All (not needed with -SkipConditionalAccess),
           DeviceManagementConfiguration.Read.All, DeviceManagementApps.Read.All,
           DeviceManagementServiceConfig.Read.All, DeviceManagementScripts.Read.All,
-          DeviceManagementRBAC.Read.All (none of these are needed with -SkipIntune)
+          DeviceManagementRBAC.Read.All (none of these are needed with -SkipIntune),
+          Team.ReadBasic.All, Sites.Read.All (only with -IncludeTeamsAndSites)
           All read-only. Reading Conditional Access and Intune data also needs a
           suitable directory role (for example Global Reader plus an Intune read role).
 
@@ -83,6 +93,12 @@ with a warning and named in ScanGaps. Most of the endpoints only exist in the Gr
 endpoint, which Microsoft can change without notice. Cloud PC provisioning policies,
 Cloud PC roles and assignment filters are not scanned.
 
+Teams and sites: -IncludeTeamsAndSites calls GET /teams/{id} (only for groups with the
+Team provisioning option) and GET /groups/{id}/sites/root. A team whose lookup fails with
+"not found" is reported as "Not found"; other errors are reported once as a warning and
+named in ScanGaps. Which error Graph returns for a group that has no team was not
+confirmed in the documentation, so verify on one group first.
+
 Nesting: the "NestedIn" column uses the direct memberOf call of the group. Whether
 administrative units show up in that result was not confirmed in the documentation.
 
@@ -94,11 +110,13 @@ It has NOT been executed or tested yet: no PowerShell was available where it was
 written. Windows PowerShell 5.1 has not been tested either.
 Test with -GroupId and -SkipIntune first, then add the Intune scan.
 ----------------------------------------------------------------------------------
-Version: 1.1
+Version: 1.2
 Last modified on: 2026-10-19
 By Claude AI and Marco Janse
 
 Version history:
+1.2 - New -IncludeTeamsAndSites switch: TeamStatus, SiteUrl and SiteLastModified columns
+      for Microsoft 365 groups (informational, not counted in UsageFound)
 1.1 - Intune scan extended after comparing with Get-IntuneAssignments (amirjs): security
       baselines, settings catalog compliance, update rings, shell scripts, branding,
       WDAC, app configuration, app protection, terms and conditions and Intune role
@@ -130,6 +148,13 @@ candidates for "can be removed". Check with the owners before deleting anything,
 because the places listed under NOTES are not covered.
 
 .EXAMPLE
+.\Get-GroupUsage.ps1 -SkipIntune -IncludeTeamsAndSites | Where-Object { $_.TeamStatus -or $_.SiteUrl } | Format-Table DisplayName, TeamStatus, SiteUrl, SiteLastModified
+
+Adds the Team status (Active / Archived / Not found) and the SharePoint site of the
+Microsoft 365 groups. An archived Team or an old SiteLastModified suggests the group is
+no longer used. These columns are informational and not part of UsageFound.
+
+.EXAMPLE
 .\Get-GroupUsage.ps1 -GroupId (Import-Csv .\memberOf-groups.csv).ObjectId | Export-Csv -Path .\group-usage.csv -NoTypeInformation -Encoding UTF8
 
 Reads the group IDs from the CSV exported by Get-MemberOfDynamicGroups.ps1 and writes the
@@ -144,6 +169,8 @@ param(
     [switch]$SkipConditionalAccess,
 
     [switch]$SkipIntune,
+
+    [switch]$IncludeTeamsAndSites,
 
     [switch]$Disconnect
 )
@@ -201,6 +228,7 @@ if (-not $SkipIntune) {
     $requiredScopes += 'DeviceManagementConfiguration.Read.All', 'DeviceManagementApps.Read.All', 'DeviceManagementServiceConfig.Read.All',
     'DeviceManagementScripts.Read.All', 'DeviceManagementRBAC.Read.All'
 }
+if ($IncludeTeamsAndSites) { $requiredScopes += 'Team.ReadBasic.All', 'Sites.Read.All' }
 
 $context = Get-MgContext
 if (-not $context) {
@@ -226,7 +254,7 @@ else {
 # ---------------------------------------------------------------------------
 Write-Host "Retrieving groups..." -ForegroundColor Cyan
 
-$groupProperties = 'Id', 'DisplayName', 'MembershipRule'
+$groupProperties = 'Id', 'DisplayName', 'MembershipRule', 'GroupTypes', 'ResourceProvisioningOptions'
 
 $dynamicGroups = Get-MgGroup -All -ConsistencyLevel eventual -CountVariable groupCount `
     -Filter "groupTypes/any(c:c eq 'DynamicMembership')" `
@@ -476,6 +504,8 @@ $total = $targets.Count
 $i = 0
 $appGapReported = $false
 $nestingGapReported = $false
+$teamGapReported = $false
+$siteGapReported = $false
 
 # Helper: a hashtable lookup that returns an empty array when the key is missing
 function Get-IndexedValue {
@@ -519,6 +549,42 @@ $results = foreach ($group in $targets) {
         }
     }
 
+    # Optional: Team status and SharePoint site of a Microsoft 365 group (informational)
+    $teamStatus = ''
+    $siteUrl = ''
+    $siteLastModified = $null
+    if ($IncludeTeamsAndSites -and (@($group.GroupTypes) -contains 'Unified')) {
+        if (@($group.ResourceProvisioningOptions) -contains 'Team') {
+            try {
+                $team = Invoke-MgGraphRequest -Method GET -Uri ('https://graph.microsoft.com/v1.0/teams/' + $group.Id) -OutputType Hashtable
+                if ($team['isArchived'] -eq $true) { $teamStatus = 'Archived' } else { $teamStatus = 'Active' }
+            }
+            catch {
+                if ($_.Exception.Message -match 'NotFound|Not Found|404') {
+                    $teamStatus = 'Not found'
+                }
+                elseif (-not $teamGapReported) {
+                    Write-Warning "Could not read a Team ($($_.Exception.Message)). The TeamStatus column will be incomplete."
+                    $teamGapReported = $true
+                    $scanGaps.Add('TeamStatus')
+                }
+            }
+        }
+
+        try {
+            $site = Invoke-MgGraphRequest -Method GET -Uri ('https://graph.microsoft.com/v1.0/groups/' + $group.Id + '/sites/root') -OutputType Hashtable
+            $siteUrl = $site['webUrl']
+            $siteLastModified = $site['lastModifiedDateTime']
+        }
+        catch {
+            if ($_.Exception.Message -notmatch 'NotFound|Not Found|404' -and -not $siteGapReported) {
+                Write-Warning "Could not read a SharePoint site ($($_.Exception.Message)). The SiteUrl / SiteLastModified columns will be incomplete."
+                $siteGapReported = $true
+                $scanGaps.Add('SharePointSite')
+            }
+        }
+    }
+
     $caIn = Get-IndexedValue -Index $caInclude -Key $group.Id
     $caEx = Get-IndexedValue -Index $caExclude -Key $group.Id
     $inIn = Get-IndexedValue -Index $intuneInclude -Key $group.Id
@@ -539,6 +605,9 @@ $results = foreach ($group in $targets) {
         IntuneExcluded           = $inEx -join '; '
         NestedIn                 = $nestedIn -join '; '
         UsedAsSourceBy           = $sourceOf -join '; '
+        TeamStatus               = $teamStatus
+        SiteUrl                  = $siteUrl
+        SiteLastModified         = $siteLastModified
         ScanGaps                 = ''
     }
 }
