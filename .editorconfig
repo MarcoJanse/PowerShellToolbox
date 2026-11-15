@@ -1,0 +1,14 @@
+# https://editorconfig.org - editor settings for VS Code (with the EditorConfig extension),
+# Visual Studio and JetBrains. Line endings match .gitattributes.
+root = true
+
+[*]
+end_of_line = lf
+
+# Windows PowerShell 5.1 reads a UTF-8 file WITHOUT BOM as Windows-1252, which breaks scripts that
+# contain non-ASCII characters. Invoke-Lint.ps1 blocks such files (PSUseBOMForUnicodeEncodedFile).
+[*.{ps1,psm1,psd1}]
+charset = utf-8-bom
+
+[*.{bat,cmd}]
+end_of_line = crlf
