@@ -1,91 +1,58 @@
-#
-# Pre-commit hook implementation, invoked by the .githooks/pre-commit shell
-# wrapper (PowerShell itself only runs *.ps1 files, so the file git actually
-# looks for - named "pre-commit", no extension - can't contain this logic
-# directly).
-#
-# Lints staged PowerShell files with PSScriptAnalyzer and
-# runs the Pester test suite. Blocks the commit on analyzer errors or test
-# failures. Analyzer warnings are shown but do not block.
-#
-# Enabled once per clone via:
-#   git config core.hooksPath .githooks
-#
-# Skip for one commit with: git commit --no-verify
-# See docs/Testing-and-Linting.md for what each check means and how to fix findings.
+<#
+.SYNOPSIS
+    Pre-commit hook implementation, invoked by the .githooks/pre-commit shell wrapper.
 
+.DESCRIPTION
+    Runs exactly the same checks as CI (.github/workflows/ci.yml), by calling the same scripts:
+      1. .github/scripts/Invoke-Lint.ps1        on the STAGED PowerShell files
+      2. .github/scripts/Invoke-PesterTests.ps1 (the full Pester suite)
+    The only difference with CI is WHICH files are linted: the hook lints the staged files,
+    CI lints the whole repo. The rules, the settings files and what blocks are identical.
+
+    The staged versions are written byte-for-byte to a temp folder with 'git checkout-index'
+    and linted there, so a fix you haven't 'git add'-ed yet can't hide a problem, and
+    file-level rules such as PSUseBOMForUnicodeEncodedFile see the real bytes.
+
+    Enabled once per clone with:  git config core.hooksPath .githooks
+    Skip for one commit with:     git commit --no-verify
+    See .githooks/README.md and docs/Testing-and-Linting.md.
+#>
 $ErrorActionPreference = 'Stop'
-$repoRoot = git rev-parse --show-toplevel
-Set-Location $repoRoot
 
-function Write-HookHeader {
-    param([string]$Text)
-    Write-Host "`n== $Text ==" -ForegroundColor Cyan
+$repoRoot = (git rev-parse --show-toplevel).Trim()
+Set-Location -LiteralPath $repoRoot
+$scripts = Join-Path $repoRoot '.github/scripts'
+
+# --- Staged PowerShell files (added, copied, modified, renamed) -----------------------------------
+$staged = @(git -c core.quotepath=off diff --cached --name-only --diff-filter=ACMR |
+    Where-Object { $_ -match '\.(ps1|psm1|psd1)$' })
+if ($staged.Count -eq 0) { exit 0 }
+
+# --- 1. Lint the staged snapshot ------------------------------------------------------------------
+Write-Host "`n== PSScriptAnalyzer: $($staged.Count) staged file(s) ==" -ForegroundColor Cyan
+$snapshot = Join-Path ([IO.Path]::GetTempPath()) ('pssa-precommit-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $snapshot | Out-Null
+try {
+    git checkout-index --prefix="$($snapshot.Replace('\', '/'))/" -- $staged
+    if ($LASTEXITCODE -ne 0) { throw 'git checkout-index failed.' }
+
+    & (Join-Path $scripts 'Invoke-Lint.ps1') -Files $staged -Root $snapshot
+    $lintExit = $LASTEXITCODE
 }
-
-# --- Gather staged PowerShell files -----------------------------------
-$stagedFiles = git diff --cached --name-only --diff-filter=ACM |
-    Where-Object { $_ -match '\.(ps1|psm1|psd1)$' }
-
-if (-not $stagedFiles) {
-    exit 0
+finally {
+    Remove-Item -LiteralPath $snapshot -Recurse -Force -ErrorAction SilentlyContinue
 }
-
-$stagedFiles = $stagedFiles | ForEach-Object { Join-Path $repoRoot $_ } | Where-Object { Test-Path $_ }
-
-# --- PSScriptAnalyzer ---------------------------------------------------
-Write-HookHeader 'Linting staged files with PSScriptAnalyzer'
-
-if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
-    Write-Host 'PSScriptAnalyzer is not installed.' -ForegroundColor Red
-    Write-Host 'Install it with: Install-Module PSScriptAnalyzer -Scope CurrentUser' -ForegroundColor Yellow
+if ($lintExit -ne 0) {
+    Write-Host 'Commit blocked by PSScriptAnalyzer. Fix the findings, stage again (git add) and commit.' -ForegroundColor Red
     exit 1
 }
 
-Import-Module PSScriptAnalyzer
-
-$settingsPath = Join-Path $repoRoot 'PSScriptAnalyzerSettings.psd1'
-$analyzerResults = $stagedFiles | ForEach-Object { Invoke-ScriptAnalyzer -Path $_ -Settings $settingsPath }
-
-$analyzerErrors = $analyzerResults | Where-Object Severity -EQ 'Error'
-$analyzerWarnings = $analyzerResults | Where-Object Severity -EQ 'Warning'
-
-if ($analyzerWarnings) {
-    Write-Host "`nWarnings (not blocking the commit):" -ForegroundColor Yellow
-    $analyzerWarnings | Format-Table RuleName, ScriptName, Line, Message -AutoSize | Out-Host
-}
-
-if ($analyzerErrors) {
-    Write-Host "`nErrors (blocking the commit):" -ForegroundColor Red
-    $analyzerErrors | Format-Table RuleName, ScriptName, Line, Message -AutoSize | Out-Host
-    Write-Host 'Fix the errors above, or see docs/Testing-and-Linting.md.' -ForegroundColor Red
+# --- 2. Pester, in its own process (Invoke-PesterTests uses Run.Exit, which ends the process) -------
+Write-Host "`n== Pester ==" -ForegroundColor Cyan
+& pwsh -NoProfile -NonInteractive -File (Join-Path $scripts 'Invoke-PesterTests.ps1')
+if ($LASTEXITCODE -ne 0) {
+    Write-Host 'Commit blocked by failing Pester tests.' -ForegroundColor Red
     exit 1
 }
 
-Write-Host 'No analyzer errors found.' -ForegroundColor Green
-
-# --- Pester ---------------------------------------------------------------
-Write-HookHeader 'Running Pester tests'
-
-if (-not (Get-Module -ListAvailable -Name Pester | Where-Object Version -GE '5.0.0')) {
-    Write-Host 'Pester 5+ is not installed.' -ForegroundColor Red
-    Write-Host 'Install it with: Install-Module Pester -Scope CurrentUser -MinimumVersion 5.0.0' -ForegroundColor Yellow
-    exit 1
-}
-
-Import-Module Pester -MinimumVersion 5.0.0
-
-$pesterConfig = New-PesterConfiguration
-$pesterConfig.Run.Path = Join-Path $repoRoot 'Tests'
-$pesterConfig.Run.PassThru = $true
-$pesterConfig.Output.Verbosity = 'Normal'
-
-$testResult = Invoke-Pester -Configuration $pesterConfig
-
-if ($testResult.FailedCount -gt 0) {
-    Write-Host "`n$($testResult.FailedCount) Pester test(s) failed. Commit blocked." -ForegroundColor Red
-    exit 1
-}
-
-Write-Host 'All Pester tests passed.' -ForegroundColor Green
 exit 0

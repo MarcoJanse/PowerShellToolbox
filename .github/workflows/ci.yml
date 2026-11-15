@@ -20,76 +20,24 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Install PSScriptAnalyzer and Pester
-        shell: pwsh
-        run: |
-          Install-PSResource -Name PSScriptAnalyzer -TrustRepository -Scope CurrentUser
-          Install-PSResource -Name Pester -Version '[6.0.0, 7.0.0)' -TrustRepository -Scope CurrentUser
-
+      # Lint and test with the SAME scripts the local pre-commit hook uses (.github/scripts), so a
+      # local pass and a CI pass mean the same thing. The scripts install PSScriptAnalyzer and
+      # Pester 6.x themselves when they're missing.
       - name: Install module dependencies declared in manifests
         shell: pwsh
-        run: |
-          # Reads RequiredModules out of every module manifest so new modules
-          # don't need a matching ci.yml edit - just declare the dependency
-          # in the .psd1 like Ictstuff.Windows.PackageManagement already does.
-          # The declared ModuleVersion is installed as an EXACT pin, not a
-          # floor: PSResourceGet's open-ended range resolution (e.g.
-          # "[1.0.0,]") was verified to pick an arbitrary version rather than
-          # the true latest for at least one real package on PSGallery, likely
-          # because that package mixes 3- and 4-part version numbers across
-          # its release history, which breaks NuGet's version comparison.
-          # An exact pin sidesteps that and is reproducible besides - bumping
-          # to a newer release is then a deliberate manifest edit, not
-          # something CI does silently on your behalf.
-          $requiredModules = Get-ChildItem -Path ./Modules -Recurse -Filter *.psd1 |
-              ForEach-Object { (Import-PowerShellDataFile -Path $_.FullName).RequiredModules } |
-              ForEach-Object { if ($_ -is [string]) { @{ ModuleName = $_ } } else { $_ } } |
-              Group-Object ModuleName | ForEach-Object { $_.Group[0] }
-
-          foreach ($module in $requiredModules) {
-              $installArgs = @{
-                  Name            = $module.ModuleName
-                  TrustRepository = $true
-                  Scope           = 'CurrentUser'
-              }
-              if ($module.ModuleVersion) {
-                  $installArgs.Version = "[$($module.ModuleVersion)]"
-              }
-
-              Write-Host "Installing required module: $($module.ModuleName) $($installArgs.Version)"
-              Install-PSResource @installArgs
-          }
+        run: ./.github/scripts/Install-RequiredModules.ps1
 
       - name: Run PSScriptAnalyzer
         shell: pwsh
-        run: |
-          $results = Get-ChildItem -Path . -Recurse -Include *.ps1, *.psm1, *.psd1 |
-              Where-Object { $_.FullName -notmatch '[\\/](\.git|\.githooks)[\\/]' } |
-              ForEach-Object { Invoke-ScriptAnalyzer -Path $_.FullName -Settings ./PSScriptAnalyzerSettings.psd1 }
-
-          $results | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize
-
-          $errors = $results | Where-Object Severity -EQ 'Error'
-          if ($errors) {
-              Write-Host "::error::PSScriptAnalyzer found $($errors.Count) error(s)."
-              exit 1
-          }
+        run: ./.github/scripts/Invoke-Lint.ps1
 
       - name: Run Pester tests
         shell: pwsh
-        run: |
-          Import-Module Pester -MinimumVersion 6.0.0 -Force
-          $config = New-PesterConfiguration
-          $config.Run.Path = './Tests'
-          $config.Run.Exit = $true
-          $config.Output.Verbosity = 'Detailed'
-          $config.TestResult.Enabled = $true
-          $config.TestResult.OutputPath = './testResults.xml'
-          Invoke-Pester -Configuration $config
+        run: ./.github/scripts/Invoke-PesterTests.ps1 -ResultsPath ./TestResults -Verbosity Detailed
 
       - name: Publish test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: pester-results
-          path: testResults.xml
+          path: TestResults/Pester.xml

@@ -15,9 +15,12 @@ this doc walks through both, starting from nothing.
 
 | When | What runs | Blocks the commit? |
 |---|---|---|
-| `git commit` | `.githooks/pre-commit` lints + tests **staged files only** | Yes, on analyzer errors or test failures |
-| `git push` / pull request | `.github/workflows/ci.yml` lints + tests **the whole repo** | Yes, the PR/commit gets a red ✗ on GitHub |
+| `git commit` | `.githooks/pre-commit` lints the **staged files** and runs the **whole Pester suite** | Yes, on syntax errors, analyzer errors, a missing BOM, or test failures |
+| `git push` / pull request | `.github/workflows/ci.yml` lints + tests **the whole repo** | Yes, the PR/commit gets a red ✗ on GitHub, with findings as annotations on the file |
 
+Both call the same scripts in `.github/scripts/` (`Invoke-Lint.ps1` and
+`Invoke-PesterTests.ps1`), so the rules and what blocks are identical; the
+only difference is that the hook lints just the files you're committing.
 The local hook is your fast feedback loop; CI is the backstop in case the hook
 was skipped (`--no-verify`) or never installed on a given machine.
 
@@ -37,30 +40,76 @@ git config core.hooksPath .githooks
 ```
 
 Without this, `git commit` won't trigger the hook — nothing else changes.
+How the hook works, what exactly blocks a commit and how to troubleshoot it:
+[.githooks/README.md](../.githooks/README.md).
 
 ## Linting with PSScriptAnalyzer
 
-Run it yourself, any time, against one file or the whole repo:
+Run it yourself, any time, with exactly the rules the hook and CI use
+(including the right settings file per folder):
 
 ```powershell
-Invoke-ScriptAnalyzer -Path .\Modules\Windows\PSToolboxExample\Public\Get-DiskSpaceReport.ps1 -Settings .\PSScriptAnalyzerSettings.psd1
-Invoke-ScriptAnalyzer -Path . -Recurse -Settings .\PSScriptAnalyzerSettings.psd1
+# One or more files (repo-relative paths)
+./.github/scripts/Invoke-Lint.ps1 -Files 'Modules/Windows/PSToolboxExample/Public/Get-DiskSpaceReport.ps1'
+
+# The whole repo, like CI
+./.github/scripts/Invoke-Lint.ps1
 ```
 
-Each finding has a `RuleName`, a `Severity` (`Error` or `Warning` in this
-repo's [PSScriptAnalyzerSettings.psd1](../PSScriptAnalyzerSettings.psd1)),
-and a `Message` telling you what to change. Errors block your commit;
-warnings are shown but don't.
+Each finding has a `RuleName`, a `Severity` and a `Message` telling you what
+to change. What happens with each severity, in the hook and in CI:
 
-If a rule fires somewhere you're confident is fine, suppress it on that one
-line instead of disabling it repo-wide:
+| Severity | Meaning | Blocks the commit? |
+|---|---|---|
+| `ParseError` | The script doesn't even parse (syntax error, e.g. a missing `)`) | Yes |
+| `Error` | A rule found a real problem | Yes |
+| `Warning` | Probably worth fixing | No, shown only — except the rules listed in `-BlockingWarningRules` of `Invoke-Lint.ps1` (see below) |
+
+The rules come from the repo's [PSScriptAnalyzerSettings.psd1](../PSScriptAnalyzerSettings.psd1).
+A folder can have its own settings file that replaces the root one for
+everything below it — `Scripts/Microsoft365/Intune/` does.
+
+### Two rules you're likely to meet
+
+**`PSUseBOMForUnicodeEncodedFile` (blocks the commit).** Your file contains
+a character outside plain ASCII (`é`, `→`, `—`, ...) but was saved as UTF-8
+*without* a byte-order mark. PowerShell 7 copes with that; Windows
+PowerShell 5.1 doesn't — it reads the file as Windows-1252, some characters
+turn into quote marks, and the script breaks with parse errors.
+**Fix:** in VS Code, click the encoding in the status bar → **Save with
+Encoding** → **UTF-8 with BOM**, then `git add` the file again — or run
+`./.github/scripts/Add-MissingBom.ps1`. Or replace the special characters
+with plain ASCII (`->`, `-`). Careful: the status bar shows the encoding VS
+Code will *save* with, not necessarily what's on disk; `Format-Hex -Path
+<file> -Count 3` shows `EF BB BF` when the BOM is really there.
+
+**`PSUseCompatibleSyntax` (blocks the commit, Intune folder only).** Scripts
+under `Scripts/Microsoft365/Intune/` run in **Windows PowerShell 5.1** —
+Intune platform scripts, remediations and app requirement scripts don't use
+PowerShell 7. This rule reports PowerShell 7-only syntax there, such as
+`$a ?? 'default'`, `$x ? 'yes' : 'no'` or `$obj?.Property`.
+**Fix:** write it the 5.1 way, e.g. `if ($null -ne $a) { $a } else { 'default' }`.
+
+### Suppressing a rule
+
+If a rule fires somewhere you're confident is fine, suppress it for that one
+function or script instead of disabling it repo-wide. The attribute goes
+directly above the `param()` block (or `[CmdletBinding()]`) of the function
+or script, and applies to that whole function or script — there's no
+per-line suppression:
 
 ```powershell
-[Diagnostics.CodeAnalysis.SuppressMessage('PSAvoidUsingWriteHost', '', Justification = 'Interactive script, output is meant for the console')]
+function Remove-OldReport {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Only deletes files in a temp folder this function created itself')]
+    [CmdletBinding()]
+    param([string]$Path)
+    ...
+}
 ```
 
 If a rule is consistently wrong for *this whole project* (not just one
-line), add it to `ExcludeRules` in `PSScriptAnalyzerSettings.psd1` — but
+function), add it to `ExcludeRules` in `PSScriptAnalyzerSettings.psd1` — but
 that's a repo-wide decision, so do it deliberately, not to silence one
 inconvenient warning.
 
@@ -134,7 +183,10 @@ test pass on any machine, with any disk layout, with no real WMI call.
 ### Running tests locally
 
 ```powershell
-# Everything
+# Everything, exactly like the hook and CI
+./.github/scripts/Invoke-PesterTests.ps1
+
+# Everything, directly with Pester
 Invoke-Pester -Path .\Tests
 
 # Just one file, with full detail on every test
@@ -143,11 +195,16 @@ Invoke-Pester -Path .\Tests\Modules\Windows\PSToolboxExample.Tests.ps1 -Output D
 
 ## Getting set up
 
+Run this in **PowerShell 7** — the hook runs in `pwsh`:
+
 ```powershell
-Install-Module PSScriptAnalyzer -Scope CurrentUser
-Install-Module Pester -Scope CurrentUser -MinimumVersion 5.0.0
 git config core.hooksPath .githooks
+./.github/scripts/Install-RequiredModules.ps1   # module dependencies the tests need, same versions as CI
 ```
+
+PSScriptAnalyzer (1.24.0 or later) and Pester 6.x are installed automatically
+by `Invoke-Lint.ps1` and `Invoke-PesterTests.ps1` when they're missing, the
+same way as on the CI runner.
 
 ## When the hook gets in your way
 
@@ -155,3 +212,6 @@ git config core.hooksPath .githooks
 - If `pwsh` isn't installed, the hook tells you so and blocks rather than
   silently skipping the checks — install PowerShell 7 from
   https://aka.ms/powershell.
+- The hook checks the **staged** version of your files. Fixed something but
+  still blocked? `git add` the file again.
+- More symptoms and fixes: [.githooks/README.md](../.githooks/README.md#troubleshooting).
