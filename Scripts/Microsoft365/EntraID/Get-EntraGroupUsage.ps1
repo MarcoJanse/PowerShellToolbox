@@ -124,38 +124,38 @@ Version history:
 1.0 - Initial version (companion to Get-MemberOfDynamicGroups.ps1 v1.4)
 
 .EXAMPLE
-.\Get-GroupUsage.ps1
+.\Get-EntraGroupUsage.ps1
 
 Checks every memberOf dynamic group in the tenant and displays the result in the
 console using PowerShell's default table formatting.
 
 .EXAMPLE
-.\Get-GroupUsage.ps1 -GroupId '00000000-0000-0000-0000-000000000000' -SkipIntune -Verbose
+.\Get-EntraGroupUsage.ps1 -GroupId '00000000-0000-0000-0000-000000000000' -SkipIntune -Verbose
 
 Quick test run against a single group, without the slow Intune scan.
 
 .EXAMPLE
-.\Get-GroupUsage.ps1 | Where-Object { $_.ConditionalAccessExclude -or $_.ConditionalAccessInclude } | Format-Table DisplayName, ConditionalAccessInclude, ConditionalAccessExclude
+.\Get-EntraGroupUsage.ps1 | Where-Object { $_.ConditionalAccessExclude -or $_.ConditionalAccessInclude } | Format-Table DisplayName, ConditionalAccessInclude, ConditionalAccessExclude
 
 Shows only the groups that a Conditional Access policy depends on. A frozen group in a
 Conditional Access exclusion or inclusion is the most urgent to resolve.
 
 .EXAMPLE
-.\Get-GroupUsage.ps1 -Disconnect | Where-Object { -not $_.UsageFound -and -not $_.ScanGaps } | Format-Table DisplayName, ObjectId
+.\Get-EntraGroupUsage.ps1 -Disconnect | Where-Object { -not $_.UsageFound -and -not $_.ScanGaps } | Format-Table DisplayName, ObjectId
 
 Lists groups where nothing was found AND every part of the scan ran: the best
 candidates for "can be removed". Check with the owners before deleting anything,
 because the places listed under NOTES are not covered.
 
 .EXAMPLE
-.\Get-GroupUsage.ps1 -SkipIntune -IncludeTeamsAndSites | Where-Object { $_.TeamStatus -or $_.SiteUrl } | Format-Table DisplayName, TeamStatus, SiteUrl, SiteLastModified
+.\Get-EntraGroupUsage.ps1 -SkipIntune -IncludeTeamsAndSites | Where-Object { $_.TeamStatus -or $_.SiteUrl } | Format-Table DisplayName, TeamStatus, SiteUrl, SiteLastModified
 
 Adds the Team status (Active / Archived / Not found) and the SharePoint site of the
 Microsoft 365 groups. An archived Team or an old SiteLastModified suggests the group is
 no longer used. These columns are informational and not part of UsageFound.
 
 .EXAMPLE
-.\Get-GroupUsage.ps1 -GroupId (Import-Csv .\memberOf-groups.csv).ObjectId | Export-Csv -Path .\group-usage.csv -NoTypeInformation -Encoding UTF8
+.\Get-EntraGroupUsage.ps1 -GroupId (Import-Csv .\memberOf-groups.csv).ObjectId | Export-Csv -Path .\group-usage.csv -NoTypeInformation -Encoding UTF8
 
 Reads the group IDs from the CSV exported by Get-MemberOfDynamicGroups.ps1 and writes the
 usage report to a CSV.
