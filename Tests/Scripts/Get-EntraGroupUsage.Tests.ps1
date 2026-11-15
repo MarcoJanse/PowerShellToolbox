@@ -1,7 +1,7 @@
 ﻿#Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '6.0.0' }
 <#
 .SYNOPSIS
-Simple Pester 6 checks for Get-GroupUsage.ps1. Nothing is executed.
+Simple Pester 6 checks for Get-EntraGroupUsage.ps1. Nothing is executed.
 
 .DESCRIPTION
 These tests only READ the script (parse it and inspect it). They never run it, never
@@ -27,14 +27,14 @@ Last modified on: 2026-10-19
 By Claude AI and Marco Janse
 
 Version history:
-1.1 - Updated for Get-GroupUsage.ps1 v1.2 (-IncludeTeamsAndSites parameter and three output columns)
-1.0 - Initial simple version (static checks only) for Get-GroupUsage.ps1 v1.0
+1.1 - Updated for Get-EntraGroupUsage.ps1 v1.2 (-IncludeTeamsAndSites parameter and three output columns)
+1.0 - Initial simple version (static checks only) for Get-EntraGroupUsage.ps1 v1.0
 #>
 
 BeforeAll {
     # Find the script: walk up from this folder, searching each level, and stop at the
     # repository root (the folder that contains .git).
-    $scriptName = 'Get-GroupUsage.ps1'
+    $scriptName = 'Get-EntraGroupUsage.ps1'
     $script:ScriptPath = $null
     $searchDir = $PSScriptRoot
     while ($searchDir -and -not $script:ScriptPath) {
@@ -76,7 +76,7 @@ BeforeAll {
             ForEach-Object { $_.GetCommandName() } | Where-Object { $_ })
 }
 
-Describe 'Get-GroupUsage.ps1' {
+Describe 'Get-EntraGroupUsage.ps1' {
 
     Context 'File' {
         It 'parses without syntax errors' {
