@@ -12,6 +12,9 @@
 ConsoleHost_history.txt
 *.ps1.swp
 
+# log files
+/logs/
+
 # Pester output
 testResults.xml
 coverage.xml
