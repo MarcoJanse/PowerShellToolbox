@@ -1,4 +1,4 @@
-function Export-IctWinGetPackage {
+﻿function Export-IctWinGetPackage {
     <#
     .SYNOPSIS
         Exports installed WinGet packages to a CSV file.
@@ -58,7 +58,7 @@ function Export-IctWinGetPackage {
 
         Write-Verbose "Found $($packages.Count) package(s). Exporting to '$Path'..."
 
-        $packages | Export-Csv -Path $Path -Delimiter $Delimiter -NoTypeInformation -NoClobber
+        $packages | Export-Csv -Path $Path -Delimiter $Delimiter -NoClobber
 
         Write-Verbose "Export complete: $($packages.Count) packages written to '$Path'."
     }

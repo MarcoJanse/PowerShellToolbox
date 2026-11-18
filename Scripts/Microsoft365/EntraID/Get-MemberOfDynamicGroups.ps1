@@ -133,7 +133,7 @@ Displays the inventory in the console using PowerShell's default table formattin
 Test run against a single group before running it tenant-wide.
 
 .EXAMPLE
-.\Get-MemberOfDynamicGroups.ps1 | Export-Csv -Path .\memberOf-groups.csv -NoTypeInformation -Encoding UTF8
+.\Get-MemberOfDynamicGroups.ps1 | Export-Csv -Path .\memberOf-groups.csv -Encoding UTF8
 
 .EXAMPLE
 .\Get-MemberOfDynamicGroups.ps1 -MappingCsvPath "$env:TEMP\M365-License-Mapping.csv" | Out-GridView -Title "memberOf dynamic groups"
@@ -153,7 +153,7 @@ Quick triage: empty groups, ownerless groups, and groups whose source group was 
 Skip the audit log and list only groups that carry group-based licenses.
 
 .EXAMPLE
-.\Get-MemberOfDynamicGroups.ps1 -Disconnect | Export-Csv -Path .\memberOf-groups.csv -NoTypeInformation -Encoding UTF8
+.\Get-MemberOfDynamicGroups.ps1 -Disconnect | Export-Csv -Path .\memberOf-groups.csv -Encoding UTF8
 
 Signs out of Graph when the script is done, but only if the script made the connection
 itself. A session you were already connected to is left alone.

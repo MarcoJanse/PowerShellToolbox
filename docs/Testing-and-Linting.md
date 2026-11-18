@@ -164,7 +164,7 @@ during a test run. **Mock them**:
 ```powershell
 BeforeAll {
     Mock Get-ADUser {
-        [pscustomobject]@{ SamAccountName = 'jdoe'; Enabled = $true }
+        [PSCustomObject]@{ SamAccountName = 'jdoe'; Enabled = $true }
     }
 }
 

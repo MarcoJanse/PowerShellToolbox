@@ -71,7 +71,7 @@
     the Microsoft.PowerShell.GraphicalTools module first.)
 
 .EXAMPLE
-    .\Export-M365LicenseMatrix.ps1 | Export-Csv -Path .\Licenses.csv -NoTypeInformation -Encoding UTF8
+    .\Export-M365LicenseMatrix.ps1 | Export-Csv -Path .\Licenses.csv -Encoding UTF8
 
 .EXAMPLE
     .\Export-M365LicenseMatrix.ps1 | Export-Excel -Path .\Licenses.xlsx -AutoSize -TableName Licenses -WorksheetName "License Matrix"

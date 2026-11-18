@@ -24,7 +24,7 @@ function Get-DiskSpaceReport {
         Reports only on the C: and D: drives.
     #>
     [CmdletBinding()]
-    [OutputType([pscustomobject])]
+    [OutputType([PSCustomObject])]
     param (
         [Parameter(ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [ValidatePattern('^[A-Za-z]$')]
@@ -49,7 +49,7 @@ function Get-DiskSpaceReport {
             $sizeGb = [math]::Round($drive.Size / 1GB, 2)
             $percentFree = if ($drive.Size) { [math]::Round(($drive.FreeSpace / $drive.Size) * 100, 2) } else { 0 }
 
-            [pscustomobject]@{
+            [PSCustomObject]@{
                 DriveLetter = $drive.DeviceID
                 SizeGB      = $sizeGb
                 FreeGB      = $freeGb
