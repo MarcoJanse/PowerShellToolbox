@@ -1,4 +1,4 @@
-#Requires -Modules Pester
+﻿#Requires -Modules Pester
 
 <#
     Pester v5 tests for the Ictstuff.Windows.PackageManagement module.
@@ -28,10 +28,10 @@ Describe 'Export-IctWinGetPackage' {
     BeforeAll {
         Mock -ModuleName Ictstuff.Windows.PackageManagement Get-WinGetPackage {
             @(
-                [pscustomobject]@{ Name = 'Git'; Id = 'Git.Git'; InstalledVersion = '2.45.0' },
-                [pscustomobject]@{ Name = 'VS Code'; Id = 'Microsoft.VisualStudioCode'; InstalledVersion = '1.90.0' },
-                [pscustomobject]@{ Name = 'System Component'; Id = 'MSIX\SomeSystemPackage'; InstalledVersion = '1.0.0' },
-                [pscustomobject]@{ Name = 'Legacy Entry'; Id = 'ARP\LegacyApp'; InstalledVersion = '1.0.0' }
+                [PSCustomObject]@{ Name = 'Git'; Id = 'Git.Git'; InstalledVersion = '2.45.0' },
+                [PSCustomObject]@{ Name = 'VS Code'; Id = 'Microsoft.VisualStudioCode'; InstalledVersion = '1.90.0' },
+                [PSCustomObject]@{ Name = 'System Component'; Id = 'MSIX\SomeSystemPackage'; InstalledVersion = '1.0.0' },
+                [PSCustomObject]@{ Name = 'Legacy Entry'; Id = 'ARP\LegacyApp'; InstalledVersion = '1.0.0' }
             )
         }
     }
@@ -83,9 +83,9 @@ Describe 'Import-IctWinGetPackage' {
     It 'calls Install-IctWinGetPackage with the package IDs from the CSV' {
         $path = Join-Path $TestDrive 'import.csv'
         @(
-            [pscustomobject]@{ Name = 'Git'; Id = 'Git.Git' },
-            [pscustomobject]@{ Name = 'VS Code'; Id = 'Microsoft.VisualStudioCode' }
-        ) | Export-Csv -Path $path -Delimiter ';' -NoTypeInformation
+            [PSCustomObject]@{ Name = 'Git'; Id = 'Git.Git' },
+            [PSCustomObject]@{ Name = 'VS Code'; Id = 'Microsoft.VisualStudioCode' }
+        ) | Export-Csv -Path $path -Delimiter ';'
 
         Import-IctWinGetPackage -Path $path
 
@@ -102,7 +102,7 @@ Describe 'Import-IctWinGetPackage' {
 
     It 'does not call Install-IctWinGetPackage when the CSV has no Id column' {
         $path = Join-Path $TestDrive 'no-id-column.csv'
-        @([pscustomobject]@{ Name = 'Git' }) | Export-Csv -Path $path -Delimiter ';' -NoTypeInformation
+        @([PSCustomObject]@{ Name = 'Git' }) | Export-Csv -Path $path -Delimiter ';'
 
         Import-IctWinGetPackage -Path $path -ErrorAction SilentlyContinue
 
@@ -111,7 +111,7 @@ Describe 'Import-IctWinGetPackage' {
 
     It 'does not install anything when -WhatIf is specified' {
         $path = Join-Path $TestDrive 'whatif.csv'
-        @([pscustomobject]@{ Name = 'Git'; Id = 'Git.Git' }) | Export-Csv -Path $path -Delimiter ';' -NoTypeInformation
+        @([PSCustomObject]@{ Name = 'Git'; Id = 'Git.Git' }) | Export-Csv -Path $path -Delimiter ';'
 
         Import-IctWinGetPackage -Path $path -WhatIf
 
@@ -127,7 +127,7 @@ Describe 'Install-IctWinGetPackage' {
 
     It 'skips a package that is already installed' {
         Mock -ModuleName Ictstuff.Windows.PackageManagement Get-WinGetPackage {
-            [pscustomobject]@{ Id = 'Git.Git'; InstalledVersion = '2.45.0' }
+            [PSCustomObject]@{ Id = 'Git.Git'; InstalledVersion = '2.45.0' }
         }
 
         Install-IctWinGetPackage -PackageId 'Git.Git'

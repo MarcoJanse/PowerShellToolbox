@@ -155,7 +155,7 @@ Microsoft 365 groups. An archived Team or an old SiteLastModified suggests the g
 no longer used. These columns are informational and not part of UsageFound.
 
 .EXAMPLE
-.\Get-EntraGroupUsage.ps1 -GroupId (Import-Csv .\memberOf-groups.csv).ObjectId | Export-Csv -Path .\group-usage.csv -NoTypeInformation -Encoding UTF8
+.\Get-EntraGroupUsage.ps1 -GroupId (Import-Csv .\memberOf-groups.csv).ObjectId | Export-Csv -Path .\group-usage.csv -Encoding UTF8
 
 Reads the group IDs from the CSV exported by Get-MemberOfDynamicGroups.ps1 and writes the
 usage report to a CSV.

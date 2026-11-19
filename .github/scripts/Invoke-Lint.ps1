@@ -144,7 +144,7 @@ $findings = @(foreach ($file in $Files) {
     if ($settingsByFile[$file]) { $analyzerParams.Settings = $settingsByFile[$file] }
 
     $fileFindings = @(foreach ($r in @(Invoke-ScriptAnalyzer @analyzerParams)) {
-        [pscustomobject]@{
+        [PSCustomObject]@{
             Severity = [string]$r.Severity
             RuleName = $r.RuleName
             File     = $file
@@ -159,7 +159,7 @@ $findings = @(foreach ($file in $Files) {
         $parseErrors = $null
         [void][System.Management.Automation.Language.Parser]::ParseFile($fullPath, [ref]$null, [ref]$parseErrors)
         foreach ($e in @($parseErrors)) {
-            $fileFindings += [pscustomobject]@{
+            $fileFindings += [PSCustomObject]@{
                 Severity = 'ParseError'
                 RuleName = $e.ErrorId
                 File     = $file

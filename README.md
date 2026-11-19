@@ -14,53 +14,64 @@ as you go (e.g. `Exchange`, `Intune`, `SharePoint`, `Teams` under
 
 ```text
 PowerShellToolbox/
-├── Modules/                 # Reusable modules: multiple functions, a manifest, versioned
-│   ├── Azure/
-│   ├── Microsoft365/
-│   ├── ActiveDirectory/
-│   └── Windows/
-│       └── PSToolboxExample/    # Template module - copy this structure for new modules
-│           ├── PSToolboxExample.psd1
-│           ├── PSToolboxExample.psm1
-│           ├── Public/          # Exported functions, one file per function
-│           └── Private/         # Internal helper functions, not exported
-├── Scripts/                 # Standalone, run-it-and-done scripts (not meant to be imported)
-│   ├── Azure/
-│   ├── Microsoft365/
-│   │   └── Intune/              # Windows PowerShell 5.1 scripts (platform scripts, remediations)
-│   │       └── PSScriptAnalyzerSettings.psd1   # adds the 5.1 compatibility check for this folder
-│   ├── ActiveDirectory/
-│   └── Windows/
-├── Functions/                # Single reusable functions not (yet) part of a module
-│   ├── Azure/
-│   ├── Microsoft365/
-│   ├── ActiveDirectory/
-│   └── Windows/
-├── Snippets/                 # Small code fragments / examples, not meant to run standalone
-├── Tests/                    # Pester tests, mirroring the folders above
-│   ├── Modules/
-│   ├── Scripts/
-│   └── Functions/
-├── docs/
-│   └── Testing-and-Linting.md   # Beginner-friendly guide to Pester + PSScriptAnalyzer
 ├── .githooks/                # Local pre-commit hook: lints the staged files + runs Pester - see .githooks/README.md
 │   ├── pre-commit              # sh wrapper that git calls; hands off to pwsh
 │   ├── pre-commit.ps1          # snapshots the staged files and calls the .github/scripts below
 │   └── README.md               # setup, what blocks a commit, per-folder rule sets, troubleshooting
 ├── .github/
 │   ├── scripts/                # Shared by ci.yml AND .githooks/pre-commit - one source of truth
-│   │   ├── Invoke-Lint.ps1
-│   │   ├── Invoke-PesterTests.ps1
+│   │   ├── Add-MissingBom.ps1            # repairs PowerShell files with special characters but no BOM
 │   │   ├── Install-RequiredModules.ps1   # module dependencies from the manifests (CI + once locally)
-│   │   └── Add-MissingBom.ps1            # repairs PowerShell files with special characters but no BOM
-│   └── workflows/ci.yml        # CI: lint + test on every push and PR
+│   │   ├── Invoke-Lint.ps1
+│   │   └── Invoke-PesterTests.ps1
+│   └── workflows/
+│       └── ci.yml              # CI: lint + test on every push and PR from forks
 ├── .vscode/
 │   ├── extensions.json         # Recommends the PowerShell and EditorConfig extensions
 │   └── settings.json           # LF line endings, UTF-8 with BOM for PowerShell, analyzer wired to the settings file
-├── PSScriptAnalyzerSettings.psd1   # Default analyzer rules for the whole repo
+├── docs/
+│   ├── Runbook-Entra-Group-Sync-Migration.md   # Procedure for the Entra memberOf -> Assigned group migration
+│   └── Testing-and-Linting.md                  # Beginner-friendly guide to Pester + PSScriptAnalyzer
+├── Functions/                # Single reusable functions not (yet) part of a module (one function per file)
+│   ├── ActiveDirectory/
+│   ├── Azure/
+│   ├── Microsoft365/
+│   │   └── EntraID/            # *-GroupSync* helpers, dot-sourced by the EntraID scripts
+│   └── Windows/
+├── Modules/                 # Reusable modules: multiple functions, a manifest, versioned
+│   ├── ActiveDirectory/
+│   ├── Azure/
+│   ├── Microsoft365/
+│   └── Windows/
+│       ├── Ictstuff.Windows.PackageManagement/   # Real module: WinGet package export/import/install
+│       │   ├── Public/
+│       │   ├── Ictstuff.Windows.PackageManagement.psd1
+│       │   └── Ictstuff.Windows.PackageManagement.psm1
+│       └── PSToolboxExample/    # Template module - copy this structure for new modules
+│           ├── Public/          # Exported functions, one file per function
+│           ├── PSToolboxExample.psd1
+│           └── PSToolboxExample.psm1   # (add a Private/ folder for internal helpers, not exported)
+├── Scripts/                 # Standalone, run-it-and-done scripts (not meant to be imported)
+│   ├── ActiveDirectory/
+│   ├── Azure/
+│   ├── Microsoft365/
+│   │   ├── EntraID/             # Entra ID tooling (memberOf migration, group usage)
+│   │   ├── Intune/              # Windows PowerShell 5.1 scripts (platform scripts, remediations)
+│   │   │   └── PSScriptAnalyzerSettings.psd1   # adds the 5.1 compatibility check for this folder
+│   │   └── Export-M365LicenseMatrix.ps1
+│   └── Windows/
+├── Snippets/                 # Small code fragments / examples, not meant to run standalone
+├── Tests/                    # Pester tests, mirroring the folders above
+│   ├── Functions/
+│   ├── Modules/
+│   │   └── Windows/
+│   └── Scripts/
 ├── .editorconfig              # UTF-8 with BOM for PowerShell files, LF line endings
 ├── .gitattributes             # Enforces LF line endings repo-wide
-└── .gitignore
+├── .gitignore
+├── CLAUDE.md                  # Project instructions for Claude Code
+├── PSScriptAnalyzerSettings.psd1   # Default analyzer rules for the whole repo
+└── README.md
 ```
 
 **Rule of thumb for what goes where:**
@@ -70,37 +81,6 @@ PowerShellToolbox/
 - A handful of related functions you'll `Import-Module` → `Modules/`
 - A fragment too small to run on its own (a one-liner, a config block) → `Snippets/`
 - A script that must run in **Windows PowerShell 5.1** (Intune platform scripts, remediations, app requirement scripts) → `Scripts/Microsoft365/Intune/`, where the linter also checks for PowerShell 7-only syntax
-
-### Example: a real Microsoft 365 / Azure / AD setup
-
-```text
-Modules/
-├── Microsoft365/
-│   └── M365.UserOffboarding/      # Disable account, revoke sessions, convert mailbox, etc.
-├── Azure/
-│   └── Az.CostReporting/          # Pull cost data, build a report, email it
-└── ActiveDirectory/
-    └── AD.HygieneChecks/          # Stale accounts, password-never-expires audit, etc.
-
-Scripts/
-├── Microsoft365/
-│   └── Invoke-WeeklyLicenseAudit.ps1
-├── Azure/
-│   └── Stop-IdleVMsOutsideBusinessHours.ps1
-└── ActiveDirectory/
-    └── Export-InactiveComputerAccounts.ps1
-
-Functions/
-├── Microsoft365/
-│   └── Get-MailboxSizeReport.ps1
-└── ActiveDirectory/
-    └── Test-IsAccountLockedOut.ps1
-
-Tests/
-├── Modules/Microsoft365/M365.UserOffboarding.Tests.ps1
-├── Scripts/Azure/Stop-IdleVMsOutsideBusinessHours.Tests.ps1
-└── Functions/ActiveDirectory/Test-IsAccountLockedOut.Tests.ps1
-```
 
 ## Linting and testing
 
